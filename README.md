@@ -1,26 +1,32 @@
-# sv
+# Trip Scheduler
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A simple SvelteKit web application for coordinating dates with a group of people going on a trip. Built with TypeScript and Tailwind CSS.
 
-## Creating a project
+## Features
 
-If you're seeing this, you've probably already done this step. Congrats!
+- **Create Events**: Set up trip events with names and descriptions
+- **Add Availability**: Each participant can add their available date ranges
+- **Visual Timeline**: See everyone's availability on an interactive bar graph
+- **Privacy Policy**: Clear information about data handling
+- **In-Memory Storage**: Development mode with session-based data storage
 
-```sh
-# create a new project
-npx sv create my-app
-```
+## Getting Started
 
-To recreate this project with the same configuration:
+### Prerequisites
 
-```sh
-# recreate this project
-npx sv create --template minimal --types ts --no-install .
+- Node.js (v18 or higher)
+- npm
+
+### Installation
+
+```bash
+# Install dependencies
+npm install
 ```
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+Once you've installed dependencies, start a development server:
 
 ```sh
 npm run dev
@@ -40,3 +46,21 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+## Usage
+
+1. Navigate to the home page
+2. Create a new event by providing a name and optional description
+3. On the event's schedule page, add your availability by entering your name and date range
+4. View the timeline graph to see overlapping availability across all participants
+
+## Tech Stack
+
+- [SvelteKit](https://kit.svelte.dev/) - Web framework
+- [TypeScript](https://www.typescriptlang.org/) - Type safety
+- [Tailwind CSS](https://tailwindcss.com/) - Styling
+- Svelte Stores - State management
+
+## Note
+
+This application currently stores all data in memory for development purposes. Data will be lost when the page is refreshed or the server is restarted.

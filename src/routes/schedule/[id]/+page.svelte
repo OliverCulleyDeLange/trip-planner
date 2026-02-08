@@ -26,7 +26,7 @@
 		ranges: Array<{ start: Date; end: Date }>;
 	}
 	
-	let timelineData = $derived((): TimelineData[] => {
+	let timelineData = $derived.by((): TimelineData[] => {
 		const dataByPerson = new Map<string, Array<{ start: Date; end: Date }>>();
 		
 		eventAvailabilities.forEach(avail => {
@@ -45,17 +45,17 @@
 		}));
 	});
 	
-	let minDate = $derived((): Date | null => {
+	let minDate = $derived.by(() => {
 		if (eventAvailabilities.length === 0) return null;
 		return new Date(Math.min(...eventAvailabilities.map(a => new Date(a.startDate).getTime())));
 	});
 	
-	let maxDate = $derived((): Date | null => {
+	let maxDate = $derived.by(() => {
 		if (eventAvailabilities.length === 0) return null;
 		return new Date(Math.max(...eventAvailabilities.map(a => new Date(a.endDate).getTime())));
 	});
 	
-	let totalDays = $derived((): number => {
+	let totalDays = $derived.by(() => {
 		if (!minDate || !maxDate) return 0;
 		return Math.ceil((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 	});
