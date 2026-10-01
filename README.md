@@ -1,66 +1,17 @@
 # Trip Scheduler
 
-A simple SvelteKit web application for coordinating dates with a group of people going on a trip. Built with TypeScript and Tailwind CSS.
+A collaborative group-trip planner. The current front end persists trips in the browser with IndexedDB and supports JSON export/import, so it can be used safely while the shared backend is built.
 
-## Features
+## Local development
 
-- **Create Events**: Set up trip events with names and descriptions
-- **Add Availability**: Each participant can add their available date ranges
-- **Visual Timeline**: See everyone's availability on an interactive bar graph
-- **Privacy Policy**: Clear information about data handling
-- **In-Memory Storage**: Development mode with session-based data storage
+Requires Node.js 22.12 or newer.
 
-## Getting Started
+1. Copy `.env.example` to `.env.local` and add a browser-restricted Geoapify key.
+2. Install dependencies with `npm install`.
+3. Run `npm run dev`.
 
-### Prerequisites
+The app is currently a static Astro site and can be deployed on Cloudflare Pages. The production backend will move storage behind repository interfaces to Cloudflare Workers and D1 without changing the UI domain model.
 
-- Node.js (v18 or higher)
-- npm
+## Data safety
 
-### Installation
-
-```bash
-# Install dependencies
-npm install
-```
-
-## Developing
-
-Once you've installed dependencies, start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
-
-## Usage
-
-1. Navigate to the home page
-2. Create a new event by providing a name and optional description
-3. On the event's schedule page, add your availability by entering your name and date range
-4. View the timeline graph to see overlapping availability across all participants
-
-## Tech Stack
-
-- [SvelteKit](https://kit.svelte.dev/) - Web framework
-- [TypeScript](https://www.typescriptlang.org/) - Type safety
-- [Tailwind CSS](https://tailwindcss.com/) - Styling
-- Svelte Stores - State management
-
-## Note
-
-This application currently stores all data in memory for development purposes. Data will be lost when the page is refreshed or the server is restarted.
+Use **Export** in the trip header to download a versioned JSON backup. Use **Import** to restore it in another browser or after local data loss.
