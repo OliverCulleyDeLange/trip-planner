@@ -1,4 +1,4 @@
-import { LocalTripRepository } from '../../lib/trip-planner/repository';
+import { ApiTripRepository, RevisionConflictError } from '../../lib/trip-planner/api-repository';
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, BedType, BaggageItem, GeoCoordinates, Participant,
   Room, TransportMode, TransportOption, Trip, TripExport, TripSession, VoteValue,
@@ -6,7 +6,7 @@ import type {
 
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
 
-const repository = new LocalTripRepository();
+const repository = new ApiTripRepository();
 let trip: Trip | undefined;
 let session: TripSession | undefined;
 let activeView: View = 'overview';
@@ -42,7 +42,7 @@ const range = (start: string, end: string) => {
 const dateKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 const iconForMode: Record<TransportMode, string> = { flight: '✈', train: '▰', coach: '▱', car: '◆', transfer: '↔', ferry: '≈' };
 type MapPoint = string | { id?: string; location: string; label?: string; colour?: string; coupleWith?: string; latitude?: number; longitude?: number };
-const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY as string | undefined;
+const geocodingAvailable = true;
 const locationAutocompleteTimers = new WeakMap<HTMLInputElement, number>();
 const locationAutocompleteControllers = new WeakMap<HTMLInputElement, AbortController>();
 
@@ -65,7 +65,7 @@ function setLocationInput(input: HTMLInputElement, value = '', coordinates?: Geo
   const suggestions = field?.querySelector<HTMLElement>('.tp-location-suggestions');
   if (suggestions) { suggestions.hidden = true; suggestions.innerHTML = ''; }
   const help = field?.querySelector<HTMLElement>('.tp-location-help');
-  if (help) help.textContent = geoapifyKey ? (coordinates ? 'Location selected and ready for the map.' : 'Select a suggestion to save this location to the map.') : 'Autocomplete needs a Geoapify API key; the location can still be saved manually.';
+  if (help) help.textContent = coordinates ? 'Location selected and ready for the map.' : 'Select a suggestion to save this location to the map.';
 }
 
 function setLocationField(form: HTMLFormElement, name: string, value = '', coordinates?: GeoCoordinates): void {
@@ -215,6 +215,10 @@ async function mutate(action: () => Promise<Trip>, message: string): Promise<voi
     render();
     showToast(message);
   } catch (error) {
+    if (error instanceof RevisionConflictError && trip) {
+      trip = await repository.getTrip(trip.id);
+      render();
+    }
     showToast(error instanceof Error ? error.message : 'Something went wrong.');
   } finally {
     $('#tp-saving').textContent = '';
@@ -232,7 +236,7 @@ function emptyState(icon: string, heading: string, copy: string, button: string,
 function renderMapPanel(title: string, maps: { label: string; detail: string; locations: MapPoint[]; sensitive?: boolean }[]): string {
   if (!maps.length) return '';
   const encodedLocations = (locations: MapPoint[]) => encodeURIComponent(JSON.stringify(locations));
-  return `<section class="tp-map-panel" data-map-panel><div class="tp-panel-head"><div><h2>${escapeHtml(title)}</h2><p class="tp-map-detail">${escapeHtml(maps[0].detail)}</p></div></div><div class="tp-map-canvas" role="region" aria-label="${escapeHtml(title)}" data-map-sensitive="${Boolean(maps[0].sensitive)}" data-map-locations="${encodedLocations(maps[0].locations)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher">${maps.map((map, index) => `<button class="${index === 0 ? 'active' : ''}" data-map-locations="${encodedLocations(map.locations)}" data-map-sensitive="${Boolean(map.sensitive)}" data-map-detail="${escapeHtml(map.detail)}">${escapeHtml(map.label)}</button>`).join('')}</div>${geoapifyKey ? '<a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a>' : ''}</section>`;
+  return `<section class="tp-map-panel" data-map-panel><div class="tp-panel-head"><div><h2>${escapeHtml(title)}</h2><p class="tp-map-detail">${escapeHtml(maps[0].detail)}</p></div></div><div class="tp-map-canvas" role="region" aria-label="${escapeHtml(title)}" data-map-sensitive="${Boolean(maps[0].sensitive)}" data-map-locations="${encodedLocations(maps[0].locations)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher">${maps.map((map, index) => `<button class="${index === 0 ? 'active' : ''}" data-map-locations="${encodedLocations(map.locations)}" data-map-sensitive="${Boolean(map.sensitive)}" data-map-detail="${escapeHtml(map.detail)}">${escapeHtml(map.label)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></section>`;
 }
 
 function renderAddressMap(people: Participant[]): string {
@@ -249,7 +253,7 @@ function renderAddressMap(people: Participant[]): string {
   });
   const visiblePoints = points.filter(point => !hiddenIds.includes(point.id));
   const encoded = (value: unknown) => encodeURIComponent(JSON.stringify(value));
-  return `<section class="tp-map-panel tp-address-map" data-map-panel data-address-map data-map-storage-key="${escapeHtml(storageKey)}"><div class="tp-panel-head"><div><h2>Address map</h2><p class="tp-map-detail">${visiblePoints.length}/${points.length} people shown</p></div></div><div class="tp-map-canvas" role="region" aria-label="Address map" data-map-connect="false" data-map-sensitive="true" data-map-locations="${encoded(visiblePoints)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher tp-person-map-toggles">${points.map(point => `<button class="${hiddenIds.includes(point.id) ? '' : 'active'}" type="button" style="--person:${point.colour}" data-map-person-id="${escapeHtml(point.id)}" data-map-person-point="${encoded(point)}" aria-pressed="${!hiddenIds.includes(point.id)}"><i></i>${escapeHtml(point.label!)}</button>`).join('')}</div>${geoapifyKey ? '<a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a>' : ''}</section>`;
+  return `<section class="tp-map-panel tp-address-map" data-map-panel data-address-map data-map-storage-key="${escapeHtml(storageKey)}"><div class="tp-panel-head"><div><h2>Address map</h2><p class="tp-map-detail">${visiblePoints.length}/${points.length} people shown</p></div></div><div class="tp-map-canvas" role="region" aria-label="Address map" data-map-connect="false" data-map-sensitive="true" data-map-locations="${encoded(visiblePoints)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher tp-person-map-toggles">${points.map(point => `<button class="${hiddenIds.includes(point.id) ? '' : 'active'}" type="button" style="--person:${point.colour}" data-map-person-id="${escapeHtml(point.id)}" data-map-person-point="${encoded(point)}" aria-pressed="${!hiddenIds.includes(point.id)}"><i></i>${escapeHtml(point.label!)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></section>`;
 }
 
 function renderOverview(): string {
@@ -443,7 +447,6 @@ function addBagRow(item?: BaggageItem): void {
 }
 
 async function requestLocationSuggestions(input: HTMLInputElement, query: string): Promise<void> {
-  if (!geoapifyKey) return;
   locationAutocompleteControllers.get(input)?.abort();
   const controller = new AbortController();
   locationAutocompleteControllers.set(input, controller);
@@ -453,7 +456,7 @@ async function requestLocationSuggestions(input: HTMLInputElement, query: string
   if (!suggestions || !help) return;
   help.textContent = 'Searching…';
   try {
-    const response = await fetch(`https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&limit=6&format=geojson&apiKey=${encodeURIComponent(geoapifyKey)}`, { signal: controller.signal });
+    const response = await fetch(`/api/geocode?type=autocomplete&text=${encodeURIComponent(query)}`, { signal: controller.signal });
     if (!response.ok) throw new Error('Location search failed.');
     const result = await response.json() as { features?: { properties?: { formatted?: string; address_line1?: string; address_line2?: string }; geometry?: { coordinates?: [number, number] } }[] };
     const options = (result.features ?? []).flatMap(feature => {
@@ -659,10 +662,18 @@ async function saveActivity(form: HTMLFormElement): Promise<void> {
 function showTrip(result: { trip: Trip; session: TripSession }): void {
   trip = result.trip;
   session = result.session;
-  history.replaceState({}, '', `${location.pathname}?trip=${trip.shareToken}`);
+  history.replaceState({}, '', `${location.pathname}?trip=${trip.id}`);
+  $<HTMLDialogElement>('#tp-join-dialog').close();
   $('#tp-access').hidden = true;
   $('#tp-app').hidden = false;
   render();
+}
+
+function requestTripIdentity(loadedTrip: Trip): void {
+  trip = loadedTrip;
+  $('#tp-access-title').textContent = loadedTrip.title;
+  const dialog = $<HTMLDialogElement>('#tp-join-dialog');
+  if (!dialog.open) dialog.showModal();
 }
 
 function exportCurrentTrip(): void {
@@ -710,6 +721,22 @@ export function mountTripPlanner(): void {
     finally { button.disabled = false; button.textContent = 'Load detailed demo trip'; }
   });
 
+  $<HTMLFormElement>('#tp-join-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const error = form.querySelector<HTMLElement>('[data-join-error]')!;
+    error.hidden = true; button.disabled = true; button.textContent = 'Joining…';
+    try {
+      if (!validateForm(form) || !trip) throw new Error('Enter your name to join the trip.');
+      showTrip(await repository.accessTrip({ tripId: trip.id, displayName: formValue(form, 'name') }));
+    } catch (caught) {
+      if (caught instanceof RevisionConflictError && trip) trip = await repository.getTrip(trip.id);
+      error.textContent = caught instanceof Error ? caught.message : 'Could not join the trip.';
+      error.hidden = false;
+    } finally { button.disabled = false; button.textContent = 'Join trip'; }
+  });
+
   $('#tp-export').addEventListener('click', exportCurrentTrip);
   $('#tp-import').addEventListener('click', () => $<HTMLInputElement>('#tp-import-file').click());
   $<HTMLInputElement>('#tp-import-file').addEventListener('change', async event => {
@@ -737,7 +764,7 @@ export function mountTripPlanner(): void {
     locationAutocompleteControllers.get(input)?.abort();
     if (suggestions) suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
-    if (!geoapifyKey || input.value.trim().length < 3) return;
+    if (!geocodingAvailable || input.value.trim().length < 3) return;
     const timer = window.setTimeout(() => { void requestLocationSuggestions(input, input.value.trim()); }, 350);
     locationAutocompleteTimers.set(input, timer);
   });
@@ -843,11 +870,12 @@ export function mountTripPlanner(): void {
     const title = $('#tp-access-title');
     title.textContent = 'Loading saved trip…';
     void repository.restoreTrip(savedToken).then(result => {
-      if (result) showTrip(result);
+      if (result?.session) showTrip({ trip: result.trip, session: result.session });
+      else if (result) requestTripIdentity(result.trip);
       else {
         title.textContent = 'Create a trip';
         const error = $('#tp-access-error');
-        error.textContent = 'This trip is not stored in this browser.';
+        error.textContent = 'This trip does not exist or the link is incomplete.';
         error.hidden = false;
       }
     }).catch(() => {

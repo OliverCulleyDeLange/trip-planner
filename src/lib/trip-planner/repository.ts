@@ -11,6 +11,10 @@ const DATABASE_NAME = 'trip-planner-local';
 const DATABASE_VERSION = 1;
 
 function normalizeTrip(trip: Trip): Trip {
+  const now = new Date().toISOString();
+  trip.revision ??= 0;
+  trip.createdAt ??= now;
+  trip.updatedAt ??= now;
   trip.activities ??= [];
   trip.participants.forEach(person => {
     person.sex ??= 'prefer-not-to-say';
@@ -36,8 +40,7 @@ function openDatabase(): Promise<IDBDatabase | undefined> {
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains('trips')) {
-        const trips = database.createObjectStore('trips', { keyPath: 'id' });
-        trips.createIndex('shareToken', 'shareToken', { unique: true });
+        database.createObjectStore('trips', { keyPath: 'id' });
       }
       if (!database.objectStoreNames.contains('sessions')) database.createObjectStore('sessions', { keyPath: 'tripId' });
     };
@@ -73,7 +76,7 @@ export class LocalTripRepository implements TripRepository {
   async createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
     if (!request.availabilityRanges.length) throw new Error('Select at least one potential date range.');
-    const id = `trip-${crypto.randomUUID()}`;
+    const id = `trip_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
     const participantId = `person-${crypto.randomUUID()}`;
     const person = this.newParticipant(participantId, request.displayName, 0);
     const availabilityRanges = request.availabilityRanges
@@ -82,7 +85,9 @@ export class LocalTripRepository implements TripRepository {
     const availabilityWindow = { start: availabilityRanges[0].start, end: availabilityRanges.at(-1)!.end };
     const trip: Trip = {
       id,
-      shareToken: crypto.randomUUID().slice(0, 8),
+      revision: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       title: request.title.trim(),
       subtitle: 'A plan made together.',
       destination: request.destination.trim(),
@@ -106,8 +111,8 @@ export class LocalTripRepository implements TripRepository {
 
   async createDemoTrip(): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
-    const id = `trip-${crypto.randomUUID()}`;
-    const trip = buildDemoTrip(id, crypto.randomUUID().slice(0, 8));
+    const id = `trip_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
+    const trip = buildDemoTrip(id);
     this.trips.set(id, trip);
     const session = { tripId: id, participantId: 'oliver', displayName: 'Oliver' };
     await Promise.all([this.saveTrip(trip), this.saveSession(session)]);
@@ -116,7 +121,7 @@ export class LocalTripRepository implements TripRepository {
 
   async importTrip(exported: TripExport): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
-    if (exported?.schemaVersion !== 1 || !exported.trip?.id || !exported.trip?.shareToken || !Array.isArray(exported.trip.participants)) {
+    if (exported?.schemaVersion !== 1 || !exported.trip?.id || !Array.isArray(exported.trip.participants)) {
       throw new Error('This is not a valid trip planner export.');
     }
     const trip = normalizeTrip(clone(exported.trip));
@@ -128,10 +133,10 @@ export class LocalTripRepository implements TripRepository {
     return { trip: clone(trip), session };
   }
 
-  async restoreTrip(shareToken: string): Promise<{ trip: Trip; session: TripSession } | undefined> {
+  async restoreTrip(tripId: string): Promise<{ trip: Trip; session: TripSession } | undefined> {
     const database = await this.database;
     if (!database) return undefined;
-    const storedTrip = await readRecord<Trip>(database, 'trips', shareToken, 'shareToken');
+    const storedTrip = await readRecord<Trip>(database, 'trips', tripId);
     if (!storedTrip) return undefined;
     normalizeTrip(storedTrip);
     this.trips.set(storedTrip.id, storedTrip);
@@ -147,10 +152,10 @@ export class LocalTripRepository implements TripRepository {
 
   async accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
-    let trip = [...this.trips.values()].find(candidate => candidate.shareToken === request.shareToken);
+    let trip = this.trips.get(request.tripId);
     if (!trip) {
       const database = await this.database;
-      trip = database ? await readRecord<Trip>(database, 'trips', request.shareToken, 'shareToken') : undefined;
+      trip = database ? await readRecord<Trip>(database, 'trips', request.tripId) : undefined;
       if (trip) this.trips.set(trip.id, trip);
     }
     if (!trip) throw new Error('This trip is not stored in this browser.');
@@ -362,6 +367,8 @@ export class LocalTripRepository implements TripRepository {
   }
 
   private async commit(trip: Trip): Promise<Trip> {
+    trip.revision += 1;
+    trip.updatedAt = new Date().toISOString();
     this.trips.set(trip.id, trip);
     await this.saveTrip(trip);
     return clone(trip);

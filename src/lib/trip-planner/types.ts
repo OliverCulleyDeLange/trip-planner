@@ -141,8 +141,9 @@ export interface ActivityOption {
 
 export interface Trip {
   id: Id;
-  shareToken: string;
-  password?: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
   title: string;
   subtitle: string;
   destination: string;
@@ -173,7 +174,7 @@ export interface TripExport {
 }
 
 export interface TripAccessRequest {
-  shareToken: string;
+  tripId: string;
   displayName: string;
 }
 
@@ -189,7 +190,7 @@ export interface TripRepository {
   createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }>;
   createDemoTrip(): Promise<{ trip: Trip; session: TripSession }>;
   importTrip(exported: TripExport): Promise<{ trip: Trip; session: TripSession }>;
-  restoreTrip(shareToken: string): Promise<{ trip: Trip; session: TripSession } | undefined>;
+  restoreTrip(tripId: string): Promise<{ trip: Trip; session?: TripSession } | undefined>;
   accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }>;
   getTrip(tripId: Id): Promise<Trip>;
   updateTrip(tripId: Id, patch: Pick<Trip, 'title' | 'destination' | 'destinationCoordinates' | 'dateRange' | 'availabilityWindow'>): Promise<Trip>;

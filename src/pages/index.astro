@@ -1,11 +1,10 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
 import '../styles/trip-planner.css';
-const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY ?? '';
 ---
 
 <AppLayout title="Trip planner" description="A collaborative group trip planner.">
-  <div class="trip-planner" id="trip-planner-root" data-share-token="serre-chevalier-2027">
+  <div class="trip-planner" id="trip-planner-root">
     <section class="tp-access" id="tp-access" aria-labelledby="tp-access-title">
       <div class="tp-access-card">
         <div class="tp-brand"><span aria-hidden="true">◎</span> Trip planner</div>
@@ -64,8 +63,8 @@ const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY ?? '';
           <button type="button" data-view="stays"><span>🏠</span>Stays</button>
           <button type="button" data-view="activities"><span>✦</span>Activities</button>
           <div class="tp-sidebar-foot">
-            <span>Saved locally</span>
-            <small>Stored in this browser</small>
+            <span>Saved</span>
+            <small>Shared via private link</small>
           </div>
         </nav>
         <main class="tp-content" id="tp-content" tabindex="-1"></main>
@@ -196,11 +195,20 @@ const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY ?? '';
       <div class="tp-picker-actions"><button class="tp-text-button" type="button" id="tp-picker-clear">Clear date</button><button class="tp-button tp-button-quiet" type="button" id="tp-picker-cancel">Cancel</button></div>
     </dialog>
 
+    <dialog class="tp-dialog" id="tp-join-dialog">
+      <form class="tp-dialog-form" id="tp-join-form">
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Private trip</p><h2>Join this trip</h2><p>Enter your name so votes and availability are attributed to you.</p></div></div>
+        <div class="tp-form-grid"><label class="tp-wide-field"><span>Your name</span><input name="name" autocomplete="name" maxlength="80" required /></label></div>
+        <p class="tp-form-error" data-join-error role="alert" hidden></p>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-primary" type="submit">Join trip</button></div>
+      </form>
+    </dialog>
+
     <div class="tp-toast" id="tp-toast" role="status" hidden></div>
   </div>
 </AppLayout>
 
-<script is:inline type="module" define:vars={{ geoapifyKey }}>
+<script is:inline type="module">
   const maplibrePromise = import('https://unpkg.com/maplibre-gl@^6.9.0/dist/maplibre-gl.mjs');
   const geocodeCache = new Map();
   const liveMaps = new WeakMap();
@@ -208,14 +216,13 @@ const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY ?? '';
 
   const geocode = async location => {
     const key = location.trim().toLowerCase();
-    if (!geoapifyKey) return null;
     if (!geocodeCache.has(key)) {
       const storageKey = `trip-planner:geocode:${key}`;
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         try { geocodeCache.set(key, Promise.resolve(JSON.parse(stored))); } catch { localStorage.removeItem(storageKey); }
       }
-      if (!geocodeCache.has(key)) geocodeCache.set(key, fetch(`https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(location)}&limit=1&apiKey=${encodeURIComponent(geoapifyKey)}`)
+      if (!geocodeCache.has(key)) geocodeCache.set(key, fetch(`/api/geocode?type=search&text=${encodeURIComponent(location)}`)
         .then(response => response.ok ? response.json() : {})
         .then(result => {
           const feature = result.features?.[0];
@@ -244,14 +251,6 @@ const geoapifyKey = import.meta.env.PUBLIC_GEOAPIFY_API_KEY ?? '';
     });
     liveMaps.set(canvas, map);
     map.addControl(new maplibre.NavigationControl({ showCompass: false }), 'top-right');
-
-    if (canvas.dataset.mapSensitive === 'true' && !geoapifyKey && needsGeocoding) {
-      const message = document.createElement('p');
-      message.className = 'tp-map-message';
-      message.textContent = 'Add a Geoapify API key, then select each saved address once to place it on the map.';
-      canvas.append(message);
-      return;
-    }
 
     if (canvas.dataset.mapSensitive === 'true' && needsGeocoding && localStorage.getItem(addressConsentKey) !== 'true') {
       const consent = document.createElement('div');

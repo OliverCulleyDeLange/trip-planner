@@ -1,0 +1,38 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "trip-scheduler",
+	"account_id": "9c3bb12edbab6db746c28e5b53c4d59d",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "dist"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "trip-scheduler-production",
+			"database_id": "7c4d5a66-daf2-48b6-b112-9b398e4b50a5",
+			"migrations_dir": "migrations"
+		}
+	],
+	"env": {
+		"preview": {
+			"name": "trip-scheduler-preview",
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "trip-scheduler-preview",
+					"database_id": "cc84b394-0e11-430c-a55f-8761ef9bf917",
+					"migrations_dir": "migrations"
+				}
+			]
+		}
+	}
+}

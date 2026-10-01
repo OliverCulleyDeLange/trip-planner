@@ -1,5 +1,5 @@
 {
-  "name": "trip-scheduler",
+  "name": "trip-planner",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,13 +10,22 @@
     "dev": "astro dev",
     "build": "astro build",
     "check": "astro check",
-    "preview": "astro preview"
+    "preview": "wrangler dev",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:preview": "wrangler d1 migrations apply DB --remote --env preview",
+    "db:migrate:production": "wrangler d1 migrations apply DB --remote",
+    "deploy:preview": "CLOUDFLARE_ENV=preview pnpm build && wrangler deploy --env preview",
+    "deploy:production": "pnpm build && wrangler deploy"
   },
   "dependencies": {
+    "@astrojs/cloudflare": "^13.7.0",
     "astro": "^6.2.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.145.0"
   }
 }

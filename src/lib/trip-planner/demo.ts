@@ -42,11 +42,12 @@ const days = (start: string, end: string) => {
   return output;
 };
 
-export function buildDemoTrip(id: string, shareToken: string): Trip {
+export function buildDemoTrip(id: string): Trip {
   const availability = ranges.flatMap((candidate, rangeIndex) => days(candidate.start, candidate.end).flatMap((date, dayIndex) =>
     people.filter((_, personIndex) => (dayIndex + personIndex + rangeIndex) % 5 !== 0).map(person => ({ participantId: person.id, date, slot: 'all-day' as const, status: 'available' as const }))));
+  const now = new Date().toISOString();
   return {
-    id, shareToken, title: 'Ski trip 2027', subtitle: '', destination: 'Serre Chevalier, France', stage: 'planning', currency: 'GBP',
+    id, revision: 0, createdAt: now, updatedAt: now, title: 'Ski trip 2027', subtitle: '', destination: 'Serre Chevalier, France', stage: 'planning', currency: 'GBP',
     dateRange: { start: ranges[0].start, end: ranges[0].end }, availabilityWindow: { start: ranges[0].start, end: ranges[2].end }, availabilityRanges: structuredClone(ranges),
     participants: structuredClone(people), availability,
     transportOptions: [
