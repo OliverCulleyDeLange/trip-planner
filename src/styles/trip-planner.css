@@ -300,6 +300,10 @@ body.standalone-page:has(.trip-planner) {
 .tp-itinerary article { display: grid; grid-template-columns: 34px 150px 1fr auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--tp-line); }
 .tp-itinerary article > span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--tp-green-pale); }
 .tp-itinerary time { color: var(--tp-muted); font-size: 12px; }.tp-itinerary article > div { display: grid; }.tp-itinerary small { color: var(--tp-muted); }
+.tp-itinerary-title { display: flex; align-items: center; gap: 7px; }
+.tp-confirmation { position: relative; display: inline-grid; flex: 0 0 auto; width: 19px; height: 19px; place-items: center; border: 1px solid #c5cbc7; border-radius: 50%; background: #f5f6f5; color: #68716b; cursor: help; font-size: 12px; font-weight: 900; line-height: 1; }
+.tp-confirmation.is-confirmed { border-color: var(--tp-green); background: var(--tp-green); color: white; }
+.tp-confirmation:is(:hover, :focus-visible)::after { position: absolute; z-index: 20; bottom: calc(100% + 8px); left: 50%; width: max-content; max-width: 220px; padding: 6px 8px; border-radius: 6px; background: #17251d; color: white; content: attr(data-tooltip); font-size: 11px; font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateX(-50%); }
 .tp-map-panel { margin-top: 20px; padding: 20px; border: 1px solid var(--tp-line); border-radius: var(--tp-radius); background: white; }
 .tp-map-panel h2 { margin: 0; font-size: 20px; }.tp-map-detail { max-width: 680px; margin: 3px 0 0; overflow: hidden; color: var(--tp-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .tp-map-canvas { position: relative; width: 100%; height: 330px; margin-top: 15px; overflow: hidden; border-radius: 12px; background: var(--tp-wash); }

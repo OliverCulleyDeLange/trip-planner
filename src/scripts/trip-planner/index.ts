@@ -274,10 +274,9 @@ function renderOverview(): string {
   )).length;
   const selectedTransport = trip!.transportOptions.filter(option => option.status === 'selected');
   const selectedStay = trip!.accommodationOptions.find(option => option.status === 'selected');
-  const selectedActivities = trip!.activities.filter(option => option.status === 'selected');
-  const itineraryTransport = selectedTransport.length ? selectedTransport : trip!.transportOptions;
-  const itineraryStays = selectedStay ? [selectedStay] : trip!.accommodationOptions;
-  const itineraryActivities = selectedActivities.length ? selectedActivities : trip!.activities;
+  const itineraryTransport = trip!.transportOptions;
+  const itineraryStays = trip!.accommodationOptions;
+  const itineraryActivities = trip!.activities;
   const selectedItems = [...selectedTransport, ...(selectedStay ? [selectedStay] : [])];
   const booked = selectedItems.filter(option => Boolean(option.bookingReference?.trim())).length;
   const datesLabel = trip!.preferredDateRange
@@ -295,10 +294,11 @@ function renderOverview(): string {
   const returnStart = itineraryStays.map(option => option.checkOut).filter(Boolean).sort()[0]
     ?? trip!.preferredDateRange?.end
     ?? trip!.dateRange.end;
+  const isConfirmed = (status: TransportOption['status']) => status === 'selected' || status === 'booked';
   const visibleItineraryTransport = itineraryPersonId ? itineraryTransport.filter(option => option.participantIds.includes(itineraryPersonId)) : itineraryTransport;
-  const transportItems = visibleItineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
-  const accommodationItems = itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn, icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` }));
-  const activityItems = itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` }));
+  const transportItems = visibleItineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
+  const accommodationItems = itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn, icon: '🏠', title: option.name, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` }));
+  const activityItems = itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` }));
   const itineraryGroups = [
     { title: 'Journey there', empty: 'No outbound travel added yet.', items: transportItems.filter(item => !item.when || item.when.slice(0, 10) < returnStart) },
     { title: 'Accommodation', empty: 'No accommodation added yet.', items: accommodationItems },
@@ -306,7 +306,10 @@ function renderOverview(): string {
     { title: 'Journey back', empty: 'No return travel added yet.', items: transportItems.filter(item => item.when && item.when.slice(0, 10) >= returnStart) },
   ];
   itineraryGroups.forEach(group => group.items.sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999')));
-  const renderItineraryItem = (item: typeof transportItems[number]) => `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
+  const renderItineraryItem = (item: typeof transportItems[number]) => {
+    const confirmation = item.confirmed ? 'Confirmed itinerary choice' : 'Not confirmed — still an option';
+    return `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><span class="tp-itinerary-title"><strong>${escapeHtml(item.title)}</strong><span class="tp-confirmation ${item.confirmed ? 'is-confirmed' : 'is-pending'}" role="img" tabindex="0" aria-label="${confirmation}" data-tooltip="${confirmation}" title="${confirmation}">${item.confirmed ? '✓' : '?'}</span></span><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
+  };
   const itineraryContent = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
   const itineraryFilters = `<div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div>`;
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
