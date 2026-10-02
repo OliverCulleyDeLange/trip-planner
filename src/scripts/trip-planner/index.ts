@@ -10,6 +10,7 @@ const repository = new ApiTripRepository();
 let trip: Trip | undefined;
 let session: TripSession | undefined;
 let activeView: View = 'overview';
+let itineraryPersonId = '';
 let toastTimer = 0;
 let setupCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let setupDraftStart: string | undefined;
@@ -264,6 +265,7 @@ function renderAddressMap(people: Participant[]): string {
 
 function renderOverview(): string {
   const people = trip!.participants;
+  if (itineraryPersonId && !people.some(person => person.id === itineraryPersonId)) itineraryPersonId = '';
   const availabilityDone = people.filter(person => trip!.availability.some(entry => entry.participantId === person.id && entry.status === 'available')).length;
   const pollOptionsReady = trip!.transportOptions.length > 0 && trip!.accommodationOptions.length > 0;
   const voterDone = people.filter(person => (
@@ -293,7 +295,8 @@ function renderOverview(): string {
   const returnStart = itineraryStays.map(option => option.checkOut).filter(Boolean).sort()[0]
     ?? trip!.preferredDateRange?.end
     ?? trip!.dateRange.end;
-  const transportItems = itineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
+  const visibleItineraryTransport = itineraryPersonId ? itineraryTransport.filter(option => option.participantIds.includes(itineraryPersonId)) : itineraryTransport;
+  const transportItems = visibleItineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
   const accommodationItems = itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn, icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` }));
   const activityItems = itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` }));
   const itineraryGroups = [
@@ -305,6 +308,7 @@ function renderOverview(): string {
   itineraryGroups.forEach(group => group.items.sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999')));
   const renderItineraryItem = (item: typeof transportItems[number]) => `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
   const itineraryContent = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
+  const itineraryFilters = `<div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div>`;
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
   const mappedRoutes = itineraryTransport.flatMap(option => {
     const from = mapPoint(option.origin, option.originCoordinates);
@@ -341,7 +345,7 @@ function renderOverview(): string {
   ];
   return `${sectionHeading('', 'Overview', '')}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-avatar-stack">${people.map(person => avatar(person, false)).join('')}</div></section>
     <section class="tp-process"><h2>Trip progress</h2><div>${stages.map((stage, index) => `<button class="tp-process-item ${stage.done ? 'is-done' : ''}" data-view="${stage.view}"><span class="tp-process-check">${stage.done ? '✓' : index + 1}</span><span><strong>${escapeHtml(stage.title)}</strong><small>${escapeHtml(stage.detail)}</small></span><b>›</b></button>`).join('')}</div></section>
-    <section class="tp-itinerary"><div class="tp-panel-head"><h2>Itinerary</h2></div><div class="tp-itinerary-groups">${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
+    <section class="tp-itinerary"><div class="tp-panel-head"><h2>Itinerary</h2></div>${itineraryFilters}<div class="tp-itinerary-groups">${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
 }
 
 function renderPeople(): string {
@@ -694,6 +698,7 @@ async function saveActivity(form: HTMLFormElement): Promise<void> {
 function showTrip(result: { trip: Trip; session: TripSession }): void {
   trip = result.trip;
   session = result.session;
+  itineraryPersonId = '';
   history.replaceState({}, '', `${location.pathname}?trip=${trip.id}`);
   $<HTMLDialogElement>('#tp-join-dialog').close();
   $('#tp-access').hidden = true;
@@ -818,6 +823,7 @@ export function mountTripPlanner(): void {
     if (target.closest('#tp-picker-next')) { pickerMonth = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() + 1, 1); renderSingleMonthPicker(); return; }
     if (target.closest('#tp-picker-clear') && activeDateInput) { activeDateInput.value = ''; syncDateButtons(); $<HTMLDialogElement>('#tp-date-picker-dialog').close(); return; }
     if (target.closest('#tp-picker-cancel')) { $<HTMLDialogElement>('#tp-date-picker-dialog').close(); return; }
+    const itineraryPerson = target.closest<HTMLButtonElement>('[data-itinerary-person]'); if (itineraryPerson) { itineraryPersonId = itineraryPerson.dataset.itineraryPerson ?? ''; render(); return; }
     const setupDate = target.closest<HTMLButtonElement>('[data-setup-date]'); if (setupDate?.dataset.setupDate) { selectSetupDate(setupDate.dataset.setupDate); return; }
     const removeSetupRange = target.closest<HTMLButtonElement>('[data-remove-setup-range]'); if (removeSetupRange) { setupRanges = setupRanges.filter(candidate => candidate.id !== removeSetupRange.dataset.removeSetupRange); renderSetupCalendar(); return; }
     if (target.closest('#tp-setup-prev-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() - 1, 1); renderSetupCalendar(); return; }

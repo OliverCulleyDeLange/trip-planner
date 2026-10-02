@@ -291,6 +291,7 @@ body.standalone-page:has(.trip-planner) {
 .tp-stay-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }.tp-stay-actions a { color: var(--tp-green); font-size: 12px; font-weight: 800; }
 
 .tp-itinerary { margin-top: 20px; padding: 22px; border: 1px solid var(--tp-line); border-radius: var(--tp-radius); background: white; }
+.tp-itinerary-filter { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }.tp-itinerary-filter button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--tp-line); border-radius: 999px; background: white; cursor: pointer; font-size: 11px; font-weight: 800; }.tp-itinerary-filter button i { width: 9px; height: 9px; border-radius: 50%; background: var(--person); }.tp-itinerary-filter button.active { border-color: var(--person, var(--tp-green)); background: color-mix(in srgb, var(--person, var(--tp-green)) 18%, white); color: var(--tp-green-dark); }
 .tp-itinerary-groups { display: grid; gap: 22px; margin-top: 14px; }
 .tp-itinerary-group + .tp-itinerary-group { padding-top: 20px; border-top: 1px solid var(--tp-line); }
 .tp-itinerary-group h3 { margin: 0 0 6px; color: var(--tp-green-dark); font-size: 14px; letter-spacing: .02em; }
