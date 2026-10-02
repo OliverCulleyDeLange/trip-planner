@@ -68,6 +68,9 @@ export function normalizeTrip(trip: Trip): Trip {
   trip.availability ??= [];
   trip.transportOptions ??= [];
   trip.accommodationOptions ??= [];
+  trip.transportOptions.forEach(option => {
+    if ((option.mode as string) === 'transfer') option.mode = 'coach';
+  });
   trip.participants.forEach(person => {
     person.sex ??= 'prefer-not-to-say';
     person.goWithFlow ??= false;

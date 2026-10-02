@@ -130,8 +130,8 @@ import '../styles/trip-planner.css';
         </div>
         <div class="tp-form-grid">
           <label><span>Title</span><input name="title" placeholder="Manchester to Turin" required /></label>
-          <label><span>Mode</span><select name="mode" required><option value="flight">Flight</option><option value="train">Train</option><option value="coach">Coach</option><option value="car">Car</option><option value="transfer">Transfer</option><option value="ferry">Ferry</option></select></label>
-          <label data-transport-modes="flight train coach transfer ferry"><span>Operator</span><input name="operator" placeholder="e.g. Jet2 or Eurostar" /></label>
+          <label><span>Mode</span><select name="mode" required><option value="flight">Flight</option><option value="train">Train</option><option value="coach">Coach</option><option value="car">Car</option><option value="ferry">Ferry</option></select></label>
+          <label data-transport-modes="flight train coach ferry"><span>Operator</span><input name="operator" placeholder="e.g. Jet2 or Eurostar" /></label>
           <label><span>Price per person</span><input name="price" type="number" min="0" step="0.01" placeholder="149.00" /></label>
           <label class="tp-location-field"><span>From</span><input name="origin" placeholder="Manchester" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
           <label class="tp-location-field"><span>To</span><input name="destination" placeholder="Turin" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
@@ -213,6 +213,7 @@ import '../styles/trip-planner.css';
   const geocodeCache = new Map();
   const liveMaps = new WeakMap();
   const addressConsentKey = 'trip-planner:address-geocoding-consent';
+  const routeColours = { flight: '#3478c9', train: '#7b5fc7', coach: '#d97706', car: '#397354', ferry: '#168a92' };
 
   const geocode = async location => {
     const key = location.trim().toLowerCase();
@@ -238,6 +239,7 @@ import '../styles/trip-planner.css';
     const { default: maplibregl, ...maplibreNamed } = await maplibrePromise;
     const maplibre = maplibregl || maplibreNamed;
     const locations = JSON.parse(decodeURIComponent(canvas.dataset.mapLocations || '%5B%5D'));
+    const routes = JSON.parse(decodeURIComponent(canvas.dataset.mapRoutes || '%5B%5D'));
     const descriptors = locations.map(value => typeof value === 'string' ? { location: value } : value);
     const needsGeocoding = descriptors.some(point => !Number.isFinite(point.latitude) || !Number.isFinite(point.longitude));
     liveMaps.get(canvas)?.remove();
@@ -291,22 +293,30 @@ import '../styles/trip-planner.css';
     });
 
     displayPoints.forEach(point => {
-      if (point.label) {
-        const marker = document.createElement('div');
-        marker.className = `tp-map-person-marker${point.colours ? ' is-couple' : ''}`;
-        marker.style.setProperty('--person', point.colour || '#397354');
-        if (point.colours) marker.style.setProperty('--person-pair', `linear-gradient(90deg, ${point.colours[0]} 0 50%, ${point.colours[1]} 50% 100%)`);
-        const label = document.createElement('span');
-        label.textContent = point.label;
-        const pointer = document.createElement('i');
-        marker.append(label, pointer);
-        new maplibre.Marker({ element: marker, anchor: 'bottom' }).setLngLat(point.coordinates).setPopup(new maplibre.Popup({ offset: 20 }).setText(point.location)).addTo(map);
-      } else new maplibre.Marker({ color: point.colour || '#397354' }).setLngLat(point.coordinates).setPopup(new maplibre.Popup({ offset: 18 }).setText(point.location)).addTo(map);
+      const marker = document.createElement('div');
+      marker.className = `tp-map-person-marker${point.label ? '' : ' tp-map-place-marker'}${point.colours ? ' is-couple' : ''}`;
+      marker.style.setProperty('--person', point.colour || '#397354');
+      if (point.colours) marker.style.setProperty('--person-pair', `linear-gradient(90deg, ${point.colours[0]} 0 50%, ${point.colours[1]} 50% 100%)`);
+      const label = document.createElement('span');
+      label.textContent = point.label || point.location;
+      const pointer = document.createElement('i');
+      marker.append(label, pointer);
+      new maplibre.Marker({ element: marker, anchor: 'bottom' }).setLngLat(point.coordinates).setPopup(new maplibre.Popup({ offset: 20 }).setText(point.location)).addTo(map);
     });
     const frameVisibleItems = () => {
-      if (displayPoints.length > 1 && canvas.dataset.mapConnect !== 'false') {
-        map.addSource('trip-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: points.map(point => point.coordinates) } } });
-        map.addLayer({ id: 'trip-route', type: 'line', source: 'trip-route', paint: { 'line-color': '#397354', 'line-width': 4, 'line-opacity': .85 } });
+      if (routes.length && canvas.dataset.mapConnect !== 'false') {
+        const byLocation = new Map(points.map(point => [point.location.trim().toLowerCase(), point.coordinates]));
+        Object.entries(routeColours).forEach(([mode, colour]) => {
+          const features = routes.filter(route => route.mode === mode).map(route => {
+            const from = byLocation.get(route.from.location.trim().toLowerCase());
+            const to = byLocation.get(route.to.location.trim().toLowerCase());
+            return from && to ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [from, to] } } : null;
+          }).filter(Boolean);
+          if (!features.length) return;
+          const id = `trip-route-${mode}`;
+          map.addSource(id, { type: 'geojson', data: { type: 'FeatureCollection', features } });
+          map.addLayer({ id, type: 'line', source: id, paint: { 'line-color': colour, 'line-width': 4, 'line-opacity': .85 } });
+        });
       }
       if (displayPoints.length === 1) map.jumpTo({ center: displayPoints[0].coordinates, zoom: 11 });
       else {
@@ -351,6 +361,7 @@ import '../styles/trip-planner.css';
     const panel = button.closest('[data-map-panel]');
     const canvas = panel.querySelector('.tp-map-canvas');
     canvas.dataset.mapLocations = button.dataset.mapLocations;
+    canvas.dataset.mapRoutes = button.dataset.mapRoutes || '%5B%5D';
     canvas.dataset.mapSensitive = button.dataset.mapSensitive;
     panel.querySelector('.tp-map-detail').textContent = button.dataset.mapDetail;
     panel.querySelectorAll('button[data-map-locations]').forEach(candidate => candidate.classList.toggle('active', candidate === button));
