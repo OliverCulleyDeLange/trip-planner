@@ -49,7 +49,7 @@ export function createTrip(request: CreateTripRequest): { trip: Trip; session: T
 
 export function createDemo(): { trip: Trip; session: TripSession } {
   const trip = buildDemoTrip(newTripId());
-  return { trip, session: { tripId: trip.id, participantId: 'oliver', displayName: 'Oliver' } };
+  return { trip, session: { tripId: trip.id, participantId: 'oliver', displayName: 'Sam' } };
 }
 
 export function importTrip(exported: TripExport): { trip: Trip; session: TripSession } {

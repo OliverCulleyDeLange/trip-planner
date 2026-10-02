@@ -114,7 +114,7 @@ export class LocalTripRepository implements TripRepository {
     const id = `trip_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
     const trip = buildDemoTrip(id);
     this.trips.set(id, trip);
-    const session = { tripId: id, participantId: 'oliver', displayName: 'Oliver' };
+    const session = { tripId: id, participantId: 'oliver', displayName: 'Sam' };
     await Promise.all([this.saveTrip(trip), this.saveSession(session)]);
     return { trip: clone(trip), session };
   }
