@@ -290,11 +290,21 @@ function renderOverview(): string {
     { title: 'Preferred transport and accommodation', detail: `${selectedTransport.length} transport selected · ${selectedStay ? selectedStay.name : 'no stay selected'}`, done: selectedTransport.length > 0 && Boolean(selectedStay), view: 'transport' },
     { title: 'Booked!', detail: selectedItems.length ? `${booked}/${selectedItems.length} booking references added` : 'No selected bookings', done: selectedItems.length > 1 && booked === selectedItems.length, view: 'transport' },
   ];
-  const itinerary = [
-    ...itineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` })),
-    ...itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn ? `${option.checkIn}T23:59` : '', icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` })),
-    ...itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` })),
-  ].sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999'));
+  const returnStart = itineraryStays.map(option => option.checkOut).filter(Boolean).sort()[0]
+    ?? trip!.preferredDateRange?.end
+    ?? trip!.dateRange.end;
+  const transportItems = itineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
+  const accommodationItems = itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn, icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` }));
+  const activityItems = itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` }));
+  const itineraryGroups = [
+    { title: 'Journey there', empty: 'No outbound travel added yet.', items: transportItems.filter(item => !item.when || item.when.slice(0, 10) < returnStart) },
+    { title: 'Accommodation', empty: 'No accommodation added yet.', items: accommodationItems },
+    { title: 'Activities', empty: 'No activities added yet.', items: activityItems },
+    { title: 'Journey back', empty: 'No return travel added yet.', items: transportItems.filter(item => item.when && item.when.slice(0, 10) >= returnStart) },
+  ];
+  itineraryGroups.forEach(group => group.items.sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999')));
+  const renderItineraryItem = (item: typeof transportItems[number]) => `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
+  const itineraryContent = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
   const transportRoutes = itineraryTransport.map(option => ({ mode: option.mode, from: mapPoint(option.origin, option.originCoordinates), to: mapPoint(option.destination, option.destinationCoordinates) }))
     .filter((route): route is MapRoute => Boolean(route.from && route.to));
@@ -318,7 +328,7 @@ function renderOverview(): string {
   ];
   return `${sectionHeading('', 'Overview', '')}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-avatar-stack">${people.map(person => avatar(person, false)).join('')}</div></section>
     <section class="tp-process"><h2>Trip progress</h2><div>${stages.map((stage, index) => `<button class="tp-process-item ${stage.done ? 'is-done' : ''}" data-view="${stage.view}"><span class="tp-process-check">${stage.done ? '✓' : index + 1}</span><span><strong>${escapeHtml(stage.title)}</strong><small>${escapeHtml(stage.detail)}</small></span><b>›</b></button>`).join('')}</div></section>
-    <section class="tp-itinerary"><div class="tp-panel-head"><h2>Itinerary</h2></div>${itinerary.length ? `<div>${itinerary.map(item => `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`).join('')}</div>` : '<p>No transport, accommodation or activities have been added to the itinerary.</p>'}</section>${renderMapPanel('Journey map', journeyMaps)}`;
+    <section class="tp-itinerary"><div class="tp-panel-head"><h2>Itinerary</h2></div><div class="tp-itinerary-groups">${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
 }
 
 function renderPeople(): string {

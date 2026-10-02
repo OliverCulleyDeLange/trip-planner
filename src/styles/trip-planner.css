@@ -291,8 +291,11 @@ body.standalone-page:has(.trip-planner) {
 .tp-stay-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }.tp-stay-actions a { color: var(--tp-green); font-size: 12px; font-weight: 800; }
 
 .tp-itinerary { margin-top: 20px; padding: 22px; border: 1px solid var(--tp-line); border-radius: var(--tp-radius); background: white; }
-.tp-itinerary > p { margin: 16px 0 0; color: var(--tp-muted); }
-.tp-itinerary > div:last-child { display: grid; margin-top: 14px; }
+.tp-itinerary-groups { display: grid; gap: 22px; margin-top: 14px; }
+.tp-itinerary-group + .tp-itinerary-group { padding-top: 20px; border-top: 1px solid var(--tp-line); }
+.tp-itinerary-group h3 { margin: 0 0 6px; color: var(--tp-green-dark); font-size: 14px; letter-spacing: .02em; }
+.tp-itinerary-group > div { display: grid; }
+.tp-itinerary-group > p { margin: 10px 0 0; color: var(--tp-muted); font-size: 12px; }
 .tp-itinerary article { display: grid; grid-template-columns: 34px 150px 1fr auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--tp-line); }
 .tp-itinerary article > span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--tp-green-pale); }
 .tp-itinerary time { color: var(--tp-muted); font-size: 12px; }.tp-itinerary article > div { display: grid; }.tp-itinerary small { color: var(--tp-muted); }
