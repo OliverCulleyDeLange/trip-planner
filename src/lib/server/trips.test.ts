@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMutation, createTrip, importTrip, joinTrip, newTripId } from './trips';
+import { applyMutation, createDemo, createTrip, importTrip, joinTrip, newTripId } from './trips';
 import type { TripExport } from '../trip-planner/types';
 
 const request = {
@@ -36,5 +36,14 @@ describe('trip model', () => {
     expect(result.trip.id).not.toBe(oldId);
     expect(result.trip.id).toMatch(/^trip_[A-Za-z0-9_-]{32}$/);
     expect(result.trip.revision).toBe(0);
+  });
+
+  it('creates a complete demo journey for every traveller', () => {
+    const { trip } = createDemo();
+    for (const person of trip.participants) {
+      const journeys = trip.transportOptions.filter(option => option.participantIds.includes(person.id));
+      expect(journeys.some(option => option.departureAt.startsWith(trip.dateRange.start))).toBe(true);
+      expect(journeys.some(option => option.departureAt.startsWith(trip.dateRange.end))).toBe(true);
+    }
   });
 });

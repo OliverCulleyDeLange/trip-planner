@@ -285,10 +285,10 @@ function renderOverview(): string {
     { title: 'Booked!', detail: selectedItems.length ? `${booked}/${selectedItems.length} booking references added` : 'No selected bookings', done: selectedItems.length > 1 && booked === selectedItems.length, view: 'transport' },
   ];
   const itinerary = [
-    ...itineraryTransport.map(option => ({ when: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` })),
-    ...itineraryStays.map(option => ({ when: option.checkIn, icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` })),
-    ...itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` })),
-  ].sort((a, b) => (a.when || '9999').localeCompare(b.when || '9999'));
+    ...itineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, detail: [option.status !== 'selected' ? 'Option' : '', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` })),
+    ...itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn ? `${option.checkIn}T23:59` : '', icon: '🏠', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` })),
+    ...itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, detail: [option.status !== 'selected' ? 'Option' : '', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` })),
+  ].sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999'));
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
   const tripLocations = [
     ...itineraryTransport.flatMap(option => [mapPoint(option.origin, option.originCoordinates), mapPoint(option.destination, option.destinationCoordinates)]),
