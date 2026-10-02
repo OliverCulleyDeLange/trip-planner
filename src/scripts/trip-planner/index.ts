@@ -306,15 +306,28 @@ function renderOverview(): string {
   const renderItineraryItem = (item: typeof transportItems[number]) => `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
   const itineraryContent = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
-  const transportRoutes = itineraryTransport.map(option => ({ mode: option.mode, from: mapPoint(option.origin, option.originCoordinates), to: mapPoint(option.destination, option.destinationCoordinates) }))
-    .filter((route): route is MapRoute => Boolean(route.from && route.to));
+  const mappedRoutes = itineraryTransport.flatMap(option => {
+    const from = mapPoint(option.origin, option.originCoordinates);
+    const to = mapPoint(option.destination, option.destinationCoordinates);
+    return from && to ? [{ departureAt: option.departureAt, route: { mode: option.mode, from, to } satisfies MapRoute }] : [];
+  }).sort((a, b) => (a.departureAt || '9999').localeCompare(b.departureAt || '9999'));
+  const transportRoutes = mappedRoutes.map(item => item.route);
+  const outboundRoutes = mappedRoutes.filter(item => !item.departureAt || item.departureAt.slice(0, 10) < returnStart).map(item => item.route);
+  const inboundRoutes = mappedRoutes.filter(item => item.departureAt && item.departureAt.slice(0, 10) >= returnStart).map(item => item.route);
+  const uniqueMapPoints = (points: Exclude<MapPoint, string>[]) => points.filter((point, index) => points.findIndex(candidate => candidate.location.toLowerCase() === point.location.toLowerCase()) === index);
+  const routePoints = (routes: MapRoute[]) => uniqueMapPoints(routes.flatMap(route => [route.from, route.to]));
+  const outboundLocations = routePoints(outboundRoutes);
+  const inboundLocations = routePoints(inboundRoutes);
   const tripLocations = [
     ...transportRoutes.flatMap(route => [route.from, route.to]),
     ...itineraryStays.map(option => mapPoint(option.location, option.locationCoordinates)),
     ...itineraryActivities.map(option => mapPoint(option.location, option.locationCoordinates)),
-  ].filter((point): point is Exclude<MapPoint, string> => Boolean(point)).filter((point, index, locations) => locations.findIndex(candidate => candidate.location.toLowerCase() === point.location.toLowerCase()) === index);
+  ].filter((point): point is Exclude<MapPoint, string> => Boolean(point));
+  const uniqueTripLocations = uniqueMapPoints(tripLocations);
   const journeyMaps = [
-    ...(tripLocations.length ? [{ label: 'Trip', detail: tripLocations.map(point => point.location).join(' → '), locations: tripLocations, routes: transportRoutes }] : []),
+    { label: 'Outbound', detail: outboundLocations.map(point => point.location).join(' → ') || 'No outbound journey added', locations: outboundLocations, routes: outboundRoutes },
+    { label: 'Inbound', detail: inboundLocations.map(point => point.location).join(' → ') || 'No inbound journey added', locations: inboundLocations, routes: inboundRoutes },
+    { label: 'Entire trip', detail: uniqueTripLocations.map(point => point.location).join(' → ') || 'No journey added', locations: uniqueTripLocations, routes: transportRoutes },
     ...people.flatMap(person => {
     if (!person.origin.trim()) return [];
     const routes = itineraryTransport
