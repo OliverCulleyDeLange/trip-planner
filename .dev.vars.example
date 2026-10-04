@@ -1,0 +1,2 @@
+COOKIE_SIGNING_SECRET=replace-with-at-least-32-random-bytes
+GEOAPIFY_API_KEY=replace-with-your-geoapify-key

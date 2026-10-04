@@ -1,0 +1,406 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import '../styles/trip-planner.css';
+const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<AppLayout title="Trip planner" description="A collaborative group trip planner.">
+  <div class="trip-planner" id="trip-planner-root" data-base-url={import.meta.env.BASE_URL}>
+    <section class="tp-access" id="tp-access" aria-labelledby="tp-access-title">
+      <div class="tp-access-card">
+        <div class="tp-brand"><span aria-hidden="true">◎</span> Trip planner</div>
+        <section class="tp-account-panel" id="tp-account-panel">
+          <div id="tp-account-signed-out">
+            <p class="tp-eyebrow">Your trips, in one place</p>
+            <h1>Plan together</h1>
+            <p>Create and edit trips without an account. Sign in only if you want to keep trips under your account or restrict who can access them.</p>
+            <a class="tp-button tp-button-quiet tp-button-large" id="tp-account-sign-in" href={`${baseUrl}api/account/login`}>Sign in with Google or email</a>
+          </div>
+          <div id="tp-account-signed-in" hidden>
+            <div class="tp-account-heading"><div><p class="tp-eyebrow">Your account</p><h1 id="tp-account-welcome">Welcome back</h1></div><a class="tp-text-button" id="tp-account-sign-out" href={`${baseUrl}api/account/logout`}>Sign out</a></div>
+            <div class="tp-trip-library" id="tp-trip-library"></div>
+          </div>
+          <a class="tp-button tp-button-quiet tp-button-large tp-demo-link" href={`${baseUrl}?trip=demo`}>Explore the demo trip</a>
+        </section>
+        <section class="tp-create-area" id="tp-create-area">
+        <p class="tp-eyebrow">New plan</p><h1 id="tp-access-title">Create a trip</h1>
+        <form id="tp-access-form" class="tp-access-form" novalidate>
+          <label>
+            <span>Your name</span>
+            <input id="tp-name" name="name" placeholder="e.g. Oliver" autocomplete="name" required />
+          </label>
+          <label>
+            <span>Trip name</span>
+            <input id="tp-new-title" name="title" placeholder="e.g. Ski trip 2027" required />
+          </label>
+          <label class="tp-location-field">
+            <span>Where are you thinking?</span>
+            <input id="tp-new-destination" name="destination" placeholder="A place, region or a few options" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input required />
+            <input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon />
+            <span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small>
+          </label>
+          <div class="tp-setup-calendar-section">
+            <div class="tp-setup-calendar-head">
+              <div><strong>Potential dates</strong><span id="tp-setup-calendar-prompt">Select a start date</span></div>
+              <div><button type="button" id="tp-setup-prev-month" aria-label="Previous month">‹</button><button type="button" id="tp-setup-next-month" aria-label="Next month">›</button></div>
+            </div>
+            <div class="tp-setup-calendar" id="tp-setup-calendar" aria-live="polite"></div>
+            <div class="tp-setup-ranges" id="tp-setup-ranges"></div>
+          </div>
+          <p class="tp-form-error" id="tp-access-error" role="alert" hidden></p>
+          <button class="tp-button tp-button-primary tp-button-large" type="submit" disabled>Create blank trip</button>
+        </form>
+        </section>
+      </div>
+    </section>
+
+    <div class="tp-shell" id="tp-app" hidden>
+      <header class="tp-topbar">
+        <div class="tp-topbar-home">
+          <button class="tp-brand tp-brand-button" id="tp-my-trips" type="button" aria-label="Trip planner home"><span aria-hidden="true">◎</span><b>Trip planner</b></button>
+          <div class="tp-trip-heading">
+            <strong id="tp-title"></strong>
+            <span id="tp-subtitle"></span>
+          </div>
+        </div>
+        <div class="tp-top-actions">
+          <span class="tp-saving" id="tp-saving" aria-live="polite"></span>
+          <span class="tp-read-only-pill" id="tp-read-only-pill" hidden>View only</span>
+          <a class="tp-button tp-button-primary" id="tp-sign-in-edit" href={`${baseUrl}api/account/login`} hidden>Sign in to edit</a>
+          <button class="tp-button tp-button-quiet" id="tp-import" type="button">Import</button>
+          <input id="tp-import-file" type="file" accept="application/json,.json" hidden />
+          <button class="tp-button tp-button-quiet" id="tp-export" type="button">Export</button>
+          <button class="tp-button tp-button-quiet tp-mobile-hide" id="tp-share" type="button">Copy trip link</button>
+        </div>
+      </header>
+
+      <div class="tp-workspace">
+        <nav class="tp-sidebar" id="tp-nav" aria-label="Trip sections">
+          <button type="button" data-view="overview" aria-current="page"><span>▤</span>Overview</button>
+          <button type="button" data-view="people"><span>👤</span>People & bags</button>
+          <button type="button" data-view="availability"><span>📅</span>Availability</button>
+          <button type="button" data-view="transport"><span>✈</span>Transport</button>
+          <button type="button" data-view="stays"><span>🏠</span>Stays</button>
+          <button type="button" data-view="activities"><span>✦</span>Activities</button>
+        </nav>
+        <main class="tp-content" id="tp-content" tabindex="-1"></main>
+      </div>
+    </div>
+
+    <dialog class="tp-dialog" id="tp-trip-dialog">
+      <form method="dialog" id="tp-trip-form" novalidate>
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared details</p><h2>Edit trip</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <div class="tp-form-grid">
+          <label><span>Trip name</span><input name="title" required /></label><label class="tp-location-field"><span>Destination</span><input name="destination" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input required /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+        </div>
+        <section class="tp-trip-access-settings" id="tp-trip-access-settings">
+          <div><p class="tp-eyebrow">Visibility</p><h3>Who can access this trip?</h3></div>
+          <p id="tp-trip-access-summary"></p>
+          <div id="tp-trip-access-manager" hidden>
+            <div class="tp-access-choice">
+              <label><input type="radio" name="accessMode" value="public-link" /> <span><strong>Anyone with the link</strong><small>Anyone can view and edit without signing in.</small></span></label>
+              <label><input type="radio" name="accessMode" value="restricted" /> <span><strong>Invited accounts only</strong><small>Only the email addresses below can view or edit.</small></span></label>
+            </div>
+            <div class="tp-permission-list" id="tp-permission-list"></div>
+            <button class="tp-text-button" id="tp-add-permission" type="button">+ Add email address</button>
+            <p class="tp-form-error" id="tp-access-settings-error" role="alert" hidden></p>
+            <button class="tp-button tp-button-primary" id="tp-save-access" type="button">Save access</button>
+          </div>
+        </section>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save trip</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog" id="tp-person-dialog">
+      <form method="dialog" id="tp-person-form" novalidate>
+        <input name="id" type="hidden" />
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Traveller profile</p><h2>Add or edit person</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <div class="tp-form-grid">
+          <label><span>Name</span><input name="name" required /></label>
+          <label><span>Sex</span><select name="sex"><option value="prefer-not-to-say">Prefer not to say</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option></select></label>
+          <label class="tp-wide-field tp-location-field"><span>Address</span><input name="origin" placeholder="Town, postcode or full address" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to place this person on the map.</small></label>
+          <label class="tp-wide-field"><span>Partner</span><select name="shareWith"><option value="">None</option></select><small>Links this person as a couple and keeps the link in sync for both people.</small></label>
+        </div>
+        <fieldset class="tp-preference-fieldset"><legend>Room preference</legend><div class="tp-option-checks" id="tp-room-preferences">
+          <label><input name="roomPreference" value="happy-to-share" type="checkbox" checked /><span>Happy to share</span></label>
+          <label><input name="roomPreference" value="prefer-own" type="checkbox" /><span>Would prefer own</span></label>
+          <label><input name="roomPreference" value="require-own" type="checkbox" /><span>Needs own room</span></label>
+        </div></fieldset>
+        <fieldset class="tp-preference-fieldset"><legend>Bed preference</legend><div class="tp-option-checks" id="tp-bed-preferences">
+          <label><input name="bedPreference" value="own-bed" type="checkbox" checked /><span>Own bed</span></label>
+          <label><input name="bedPreference" value="share-anyone" type="checkbox" /><span>Share with anyone</span></label>
+          <label><input name="bedPreference" value="share-women" type="checkbox" /><span>Share with women / girls</span></label>
+          <label><input name="bedPreference" value="share-men" type="checkbox" /><span>Share with men / boys</span></label>
+        </div><div class="tp-option-checks tp-person-share-checks" id="tp-share-person-checks"></div></fieldset>
+        <fieldset><legend>Bags</legend><div class="tp-bag-list" id="tp-bag-list"></div><button class="tp-button tp-button-quiet tp-add-bag" id="tp-add-bag" type="button">+ Add bag</button></fieldset>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save person</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog tp-small-dialog" id="tp-range-dialog">
+      <form method="dialog" id="tp-range-form" novalidate>
+        <input name="id" type="hidden" />
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Candidate dates</p><h2>Add date range</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <div class="tp-form-grid">
+          <label><span>From</span><input name="start" type="date" required /></label>
+          <label><span>To</span><input name="end" type="date" required /></label>
+        </div>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save range</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog" id="tp-transport-dialog">
+      <form method="dialog" id="tp-transport-form" novalidate>
+        <div class="tp-dialog-head">
+          <div><p class="tp-eyebrow">Manual option</p><h2>Add transport</h2></div>
+          <button class="tp-icon-button" value="cancel" type="button" data-close-dialog aria-label="Close">×</button>
+        </div>
+        <div class="tp-form-grid">
+          <label><span>Title</span><input name="title" placeholder="Manchester to Turin" required /></label>
+          <label><span>Mode</span><select name="mode" required><option value="flight">Flight</option><option value="train">Train</option><option value="coach">Coach</option><option value="car">Car</option><option value="ferry">Ferry</option></select></label>
+          <label data-transport-modes="flight train coach ferry"><span>Operator</span><input name="operator" placeholder="e.g. Jet2 or Eurostar" /></label>
+          <label><span>Price per person</span><input name="price" type="number" min="0" step="0.01" placeholder="149.00" /></label>
+          <label class="tp-location-field"><span>From</span><input name="origin" placeholder="Manchester" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label class="tp-location-field"><span>To</span><input name="destination" placeholder="Turin" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label><span>Departure date</span><input name="departureDate" type="date" /></label>
+          <label><span>Departure time</span><input name="departureTime" placeholder="e.g. 14:30" /></label>
+          <label><span>Arrival date</span><input name="arrivalDate" type="date" /></label>
+          <label><span>Arrival time</span><input name="arrivalTime" placeholder="e.g. 17:15" /></label>
+          <label data-transport-modes="flight"><span>Checked bag price</span><input name="checkedPrice" type="number" min="0" step="0.01" /></label>
+          <label data-transport-modes="flight"><span>Sports bag price</span><input name="sportsPrice" type="number" min="0" step="0.01" /></label>
+          <label data-transport-modes="flight"><span>Checked allowance (kg)</span><input name="checkedMax" type="number" min="0" step="0.1" /></label>
+          <label data-transport-modes="flight"><span>Sports allowance (kg)</span><input name="sportsMax" type="number" min="0" step="0.1" /></label>
+          <label class="tp-wide-field" data-transport-modes="flight"><span>Official baggage rules URL</span><input name="baggageUrl" type="url" placeholder="https://operator.com/baggage" /></label>
+          <label class="tp-wide-field"><span>Booking reference</span><input name="bookingReference" placeholder="Add after booking" /></label>
+        </div>
+        <fieldset><legend>Travellers</legend><div class="tp-person-checks" id="tp-person-checks"></div></fieldset>
+        <div class="tp-dialog-actions">
+          <button class="tp-button tp-button-quiet" value="cancel" type="button" data-close-dialog>Cancel</button>
+          <button class="tp-button tp-button-primary" value="default" type="submit">Add option</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog" id="tp-stay-dialog">
+      <form method="dialog" id="tp-stay-form" novalidate>
+        <input name="id" type="hidden" />
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Accommodation option</p><h2>Add accommodation</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <div class="tp-form-grid">
+          <label><span>Name</span><input name="name" required /></label><label class="tp-location-field"><span>Location</span><input name="location" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="locationLatitude" type="hidden" data-location-lat /><input name="locationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label><span>Total price</span><input name="price" type="number" min="0" step="0.01" /></label><label><span>Listing URL</span><input name="url" type="url" /></label>
+          <label><span>Check in</span><input name="checkIn" type="date" /></label><label><span>Check out</span><input name="checkOut" type="date" /></label>
+          <label class="tp-wide-field"><span>Notes</span><textarea name="notes" rows="2" placeholder="Anything else the group should know"></textarea></label>
+          <label class="tp-wide-field"><span>Booking reference</span><input name="bookingReference" placeholder="Add after booking" /></label>
+        </div>
+        <fieldset><legend>Relevant travellers</legend><div class="tp-person-checks" id="tp-stay-person-checks"></div></fieldset>
+        <fieldset class="tp-structured-fieldset"><legend>Rooms and beds</legend><div class="tp-room-editor" id="tp-room-editor"></div><button class="tp-button tp-button-quiet" id="tp-add-room" type="button">+ Add room</button></fieldset>
+        <fieldset class="tp-structured-fieldset"><legend>Travel times</legend><div class="tp-travel-time-editor" id="tp-travel-time-editor"></div><button class="tp-button tp-button-quiet" id="tp-add-travel-time" type="button">+ Add travel time</button></fieldset>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save accommodation</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog" id="tp-activity-dialog">
+      <form method="dialog" id="tp-activity-form" novalidate>
+        <input name="id" type="hidden" />
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Group suggestion</p><h2>Add activity</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <div class="tp-form-grid">
+          <label><span>Name</span><input name="name" placeholder="Crag, restaurant, museum…" required /></label>
+          <label><span>Category</span><input name="category" placeholder="Climbing, food, nightlife…" /></label>
+          <label class="tp-location-field"><span>Location</span><input name="location" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="locationLatitude" type="hidden" data-location-lat /><input name="locationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label><span>Cost per person</span><input name="cost" type="number" min="0" step="0.01" /></label>
+          <label><span>Date</span><input name="date" type="date" /></label>
+          <label><span>Time</span><input name="time" placeholder="e.g. 19:30 or after lunch" /></label>
+          <label class="tp-wide-field"><span>URL</span><input name="url" type="url" /></label>
+          <label class="tp-wide-field"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
+        </div>
+        <fieldset><legend>Relevant travellers</legend><div class="tp-person-checks" id="tp-activity-person-checks"></div></fieldset>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save activity</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog tp-date-picker-dialog" id="tp-date-picker-dialog">
+      <div class="tp-date-picker-head"><button type="button" id="tp-picker-prev" aria-label="Previous month">‹</button><h2 id="tp-picker-month"></h2><button type="button" id="tp-picker-next" aria-label="Next month">›</button></div>
+      <div class="tp-single-month" id="tp-single-month"></div>
+      <div class="tp-picker-actions"><button class="tp-text-button" type="button" id="tp-picker-clear">Clear date</button><button class="tp-button tp-button-quiet" type="button" id="tp-picker-cancel">Cancel</button></div>
+    </dialog>
+
+    <dialog class="tp-dialog" id="tp-join-dialog">
+      <form class="tp-dialog-form" id="tp-join-form">
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared trip</p><h2>Join this trip</h2><p>Enter your name so votes and availability are attributed to you. No account is required.</p></div></div>
+        <div class="tp-form-grid"><label class="tp-wide-field"><span>Your name</span><input name="name" autocomplete="name" maxlength="80" required /></label></div>
+        <p class="tp-form-error" data-join-error role="alert" hidden></p>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-primary" type="submit">Join trip</button></div>
+      </form>
+    </dialog>
+
+    <div class="tp-toast" id="tp-toast" role="status" hidden></div>
+  </div>
+</AppLayout>
+
+<script is:inline type="module">
+  const maplibrePromise = import('https://unpkg.com/maplibre-gl@^6.9.0/dist/maplibre-gl.mjs');
+  const geocodeCache = new Map();
+  const liveMaps = new WeakMap();
+  const appBase = document.querySelector('#trip-planner-root')?.dataset.baseUrl?.replace(/\/$/, '') || '';
+  const addressConsentKey = 'trip-planner:address-geocoding-consent';
+  const routeColours = { flight: '#3478c9', train: '#7b5fc7', coach: '#d97706', car: '#397354', ferry: '#168a92' };
+
+  const geocode = async location => {
+    const key = location.trim().toLowerCase();
+    if (!geocodeCache.has(key)) {
+      const storageKey = `trip-planner:geocode:${key}`;
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        try { geocodeCache.set(key, Promise.resolve(JSON.parse(stored))); } catch { localStorage.removeItem(storageKey); }
+      }
+      if (!geocodeCache.has(key)) geocodeCache.set(key, fetch(`${appBase}/api/geocode?type=search&text=${encodeURIComponent(location)}`)
+        .then(response => response.ok ? response.json() : {})
+        .then(result => {
+          const feature = result.features?.[0];
+          const resolved = feature ? { location, coordinates: feature.geometry.coordinates } : null;
+          if (resolved) localStorage.setItem(storageKey, JSON.stringify(resolved));
+          return resolved;
+        }).catch(() => null));
+    }
+    return geocodeCache.get(key);
+  };
+
+  const drawMap = async canvas => {
+    const { default: maplibregl, ...maplibreNamed } = await maplibrePromise;
+    const maplibre = maplibregl || maplibreNamed;
+    const locations = JSON.parse(decodeURIComponent(canvas.dataset.mapLocations || '%5B%5D'));
+    const routes = JSON.parse(decodeURIComponent(canvas.dataset.mapRoutes || '%5B%5D'));
+    const descriptors = locations.map(value => typeof value === 'string' ? { location: value } : value);
+    const needsGeocoding = descriptors.some(point => !Number.isFinite(point.latitude) || !Number.isFinite(point.longitude));
+    liveMaps.get(canvas)?.remove();
+    canvas.replaceChildren();
+    const map = new maplibre.Map({
+      container: canvas,
+      style: 'https://tiles.openfreemap.org/styles/liberty',
+      center: [0, 28],
+      zoom: 1.25,
+      attributionControl: true,
+    });
+    liveMaps.set(canvas, map);
+    map.addControl(new maplibre.NavigationControl({ showCompass: false }), 'top-right');
+
+    if (canvas.dataset.mapSensitive === 'true' && needsGeocoding && localStorage.getItem(addressConsentKey) !== 'true') {
+      const consent = document.createElement('div');
+      consent.className = 'tp-map-consent';
+      const copy = document.createElement('p');
+      copy.textContent = 'To locate saved addresses that do not yet have coordinates, they need to be sent to Geoapify once.';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.enableAddressMap = 'true';
+      button.textContent = 'Show addresses on map';
+      consent.append(copy, button);
+      canvas.append(consent);
+      return;
+    }
+
+    const points = (await Promise.all(descriptors.map(async descriptor => {
+      if (Number.isFinite(descriptor.latitude) && Number.isFinite(descriptor.longitude)) return { ...descriptor, coordinates: [descriptor.longitude, descriptor.latitude] };
+      const result = await geocode(descriptor.location);
+      return result ? { ...descriptor, coordinates: result.coordinates } : null;
+    }))).filter(Boolean);
+    if (!points.length) {
+      const message = document.createElement('p');
+      message.className = 'tp-map-message';
+      message.textContent = descriptors.length ? `Couldn't locate ${descriptors.map(point => point.location).join(', ')}` : 'Select at least one person';
+      canvas.append(message);
+      return;
+    }
+
+    const groupedIds = new Set();
+    const displayPoints = points.flatMap(point => {
+      if (!point.id) return [point];
+      if (groupedIds.has(point.id)) return [];
+      const partner = point.coupleWith && points.find(candidate => candidate.id === point.coupleWith && candidate.coupleWith === point.id && candidate.location.trim().toLowerCase() === point.location.trim().toLowerCase());
+      if (!partner) return [point];
+      groupedIds.add(point.id);
+      groupedIds.add(partner.id);
+      return [{ ...point, label: `${point.label} ♥ ${partner.label}`, colours: [point.colour, partner.colour] }];
+    });
+
+    displayPoints.forEach(point => {
+      const marker = document.createElement('div');
+      marker.className = `tp-map-person-marker${point.label ? '' : ' tp-map-place-marker'}${point.colours ? ' is-couple' : ''}`;
+      marker.style.setProperty('--person', point.colour || '#397354');
+      if (point.colours) marker.style.setProperty('--person-pair', `linear-gradient(90deg, ${point.colours[0]} 0 50%, ${point.colours[1]} 50% 100%)`);
+      const label = document.createElement('span');
+      label.textContent = point.label || point.location;
+      const pointer = document.createElement('i');
+      marker.append(label, pointer);
+      new maplibre.Marker({ element: marker, anchor: 'bottom' }).setLngLat(point.coordinates).setPopup(new maplibre.Popup({ offset: 20 }).setText(point.location)).addTo(map);
+    });
+    const frameVisibleItems = () => {
+      if (routes.length && canvas.dataset.mapConnect !== 'false') {
+        const byLocation = new Map(points.map(point => [point.location.trim().toLowerCase(), point.coordinates]));
+        Object.entries(routeColours).forEach(([mode, colour]) => {
+          const features = routes.filter(route => route.mode === mode).map(route => {
+            const from = byLocation.get(route.from.location.trim().toLowerCase());
+            const to = byLocation.get(route.to.location.trim().toLowerCase());
+            return from && to ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [from, to] } } : null;
+          }).filter(Boolean);
+          if (!features.length) return;
+          const id = `trip-route-${mode}`;
+          map.addSource(id, { type: 'geojson', data: { type: 'FeatureCollection', features } });
+          map.addLayer({ id, type: 'line', source: id, paint: { 'line-color': colour, 'line-width': 4, 'line-opacity': .85 } });
+        });
+      }
+      if (displayPoints.length === 1) map.jumpTo({ center: displayPoints[0].coordinates, zoom: 11 });
+      else {
+        const bounds = displayPoints.reduce((value, point) => value.extend(point.coordinates), new maplibre.LngLatBounds(displayPoints[0].coordinates, displayPoints[0].coordinates));
+        map.fitBounds(bounds, { padding: 32, maxZoom: 11, duration: 0 });
+      }
+    };
+    if (map.loaded()) frameVisibleItems();
+    else map.once('load', frameVisibleItems);
+  };
+
+  const initialiseMaps = () => document.querySelectorAll('.tp-map-canvas:not([data-map-ready])').forEach(canvas => {
+    canvas.dataset.mapReady = 'true';
+    void drawMap(canvas);
+  });
+
+  window.addEventListener('trip-planner:maps-rendered', () => queueMicrotask(initialiseMaps));
+  document.addEventListener('click', event => {
+    const consentButton = event.target.closest('[data-enable-address-map]');
+    if (consentButton) {
+      localStorage.setItem(addressConsentKey, 'true');
+      document.querySelectorAll('.tp-map-canvas[data-map-sensitive="true"]').forEach(canvas => void drawMap(canvas));
+      return;
+    }
+    const personButton = event.target.closest('[data-address-map] button[data-map-person-point]');
+    if (personButton) {
+      const panel = personButton.closest('[data-address-map]');
+      const canvas = panel.querySelector('.tp-map-canvas');
+      personButton.classList.toggle('active');
+      personButton.setAttribute('aria-pressed', String(personButton.classList.contains('active')));
+      const buttons = [...panel.querySelectorAll('button[data-map-person-point]')];
+      const visiblePoints = buttons.filter(button => button.classList.contains('active')).map(button => JSON.parse(decodeURIComponent(button.dataset.mapPersonPoint)));
+      const hiddenIds = buttons.filter(button => !button.classList.contains('active')).map(button => button.dataset.mapPersonId);
+      canvas.dataset.mapLocations = encodeURIComponent(JSON.stringify(visiblePoints));
+      panel.querySelector('.tp-map-detail').textContent = `${visiblePoints.length}/${buttons.length} people shown`;
+      localStorage.setItem(panel.dataset.mapStorageKey, JSON.stringify(hiddenIds));
+      void drawMap(canvas);
+      return;
+    }
+    const button = event.target.closest('[data-map-panel] button[data-map-locations]');
+    if (!button) return;
+    const panel = button.closest('[data-map-panel]');
+    const canvas = panel.querySelector('.tp-map-canvas');
+    canvas.dataset.mapLocations = button.dataset.mapLocations;
+    canvas.dataset.mapRoutes = button.dataset.mapRoutes || '%5B%5D';
+    canvas.dataset.mapSensitive = button.dataset.mapSensitive;
+    panel.querySelector('.tp-map-detail').textContent = button.dataset.mapDetail;
+    panel.querySelectorAll('button[data-map-locations]').forEach(candidate => candidate.classList.toggle('active', candidate === button));
+    void drawMap(canvas);
+  });
+  initialiseMaps();
+</script>
+
+<script>
+  import { mountTripPlanner } from '../scripts/trip-planner';
+  mountTripPlanner();
+</script>

@@ -1,0 +1,11 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "trip-planner-domain-proxy",
+  "account_id": "e07409ca802c44c917ffee7a4a97af1b",
+  "main": "index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  }
+}

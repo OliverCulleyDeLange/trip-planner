@@ -1,26 +1,10 @@
-node_modules
-
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Env
+node_modules/
+.pnpm-store/
+dist/
+.astro/
+.wrangler/
 .env
 .env.*
 !.env.example
-!.env.test
-
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-# IDE
-.vscode/
+.dev.vars
+.DS_Store
