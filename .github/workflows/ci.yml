@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: preview
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN_INPUT: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -46,13 +46,29 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare Cloudflare API token
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
+        run: |
+          token="$CLOUDFLARE_API_TOKEN_INPUT"
+          if [[ "$token" == *"Authorization: Bearer "* ]]; then
+            token="${token#*Authorization: Bearer }"
+            token="${token%%\"*}"
+          fi
+          token="${token//$'\r'/}"
+          token="${token//$'\n'/}"
+          if [[ ! "$token" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "Cloudflare API token has an unsupported format." >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          printf 'CLOUDFLARE_API_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
       - run: pnpm build
         env:
           CLOUDFLARE_ENV: preview
       - run: pnpm wrangler d1 migrations apply DB --remote --env preview
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
       - run: pnpm wrangler deploy --env preview
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -60,7 +76,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN_INPUT: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -71,8 +87,24 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare Cloudflare API token
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
+        run: |
+          token="$CLOUDFLARE_API_TOKEN_INPUT"
+          if [[ "$token" == *"Authorization: Bearer "* ]]; then
+            token="${token#*Authorization: Bearer }"
+            token="${token%%\"*}"
+          fi
+          token="${token//$'\r'/}"
+          token="${token//$'\n'/}"
+          if [[ ! "$token" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "Cloudflare API token has an unsupported format." >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          printf 'CLOUDFLARE_API_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
       - run: pnpm build
       - run: pnpm wrangler d1 migrations apply DB --remote
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
       - run: pnpm wrangler deploy
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN_INPUT != ''
