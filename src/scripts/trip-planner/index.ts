@@ -5,8 +5,7 @@ import type {
 } from '../../lib/trip-planner/types';
 
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
-type AccountTrip = { id: string; title: string; destination: string; start: string; end: string; stage: string; updatedAt: string };
-type AccountState = { user: { email: string; name: string }; tripSession?: TripSession; trips: AccountTrip[] };
+type AccountState = { user: { email: string; name: string }; tripSession?: TripSession };
 
 const repository = new ApiTripRepository();
 const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -58,10 +57,12 @@ type JourneyMap = { label: string; detail: string; locations: MapPoint[]; routes
 const geocodingAvailable = true;
 const locationAutocompleteTimers = new WeakMap<HTMLInputElement, number>();
 const locationAutocompleteControllers = new WeakMap<HTMLInputElement, AbortController>();
-
-function signInUrl(returnTo = `${location.pathname}${location.search}`): string {
-  return `${appBase}/api/account/login?return=${encodeURIComponent(returnTo)}`;
-}
+const demoEditSelector = [
+  '#tp-edit-trip', '#tp-add-person', '#tp-add-range', '#tp-add-transport', '[data-add-transport]', '#tp-add-stay', '#tp-add-activity',
+  '[data-edit-person]', '[data-edit-range]', '[data-remove-range]', '[data-prefer-range]', '[data-edit-transport]', '[data-remove-transport]',
+  '[data-edit-stay]', '[data-edit-activity]', '[data-remove-activity]', '[data-select-stay]', '[data-select-transport]', '[data-select-activity]',
+  '[data-range-start]', '[data-date]', '[data-vote]', '[data-transport-vote]', '[data-activity-vote]', '.tp-completion button', '[data-restrict-access]',
+].join(', ');
 
 async function loadAccount(tripId?: string): Promise<AccountState | undefined> {
   try {
@@ -74,17 +75,8 @@ async function loadAccount(tripId?: string): Promise<AccountState | undefined> {
   }
 }
 
-function renderAccountPanel(): void {
-  const signedOut = $('#tp-account-signed-out');
-  const signedIn = $('#tp-account-signed-in');
-  const createArea = $('#tp-create-area');
-  signedOut.hidden = Boolean(account);
-  signedIn.hidden = !account;
-  createArea.hidden = false;
-  $<HTMLAnchorElement>('#tp-account-sign-in').href = signInUrl(location.pathname);
+function applyAccountDefaults(): void {
   if (!account) return;
-  $('#tp-account-welcome').textContent = `Welcome, ${account.user.name}`;
-  $('#tp-trip-library').innerHTML = account.trips.map(saved => `<a class="tp-library-card" href="${location.pathname}?trip=${encodeURIComponent(saved.id)}"><strong>${escapeHtml(saved.title)}</strong><span>${escapeHtml(saved.destination)}</span><small>${date(saved.start, { day: 'numeric', month: 'short' })}–${date(saved.end, { day: 'numeric', month: 'short', year: 'numeric' })}</small></a>`).join('');
   const name = $<HTMLInputElement>('#tp-name');
   if (!name.value) name.value = account.user.name;
 }
@@ -287,7 +279,16 @@ function showToast(message: string): void {
   toastTimer = window.setTimeout(() => { element.hidden = true; }, 2600);
 }
 
+function showDemoReadOnlyMessage(): void {
+  const dialog = $<HTMLDialogElement>('#tp-demo-read-only-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
 async function mutate(action: () => Promise<Trip>, message: string): Promise<void> {
+  if (trip?.id === 'demo') {
+    showDemoReadOnlyMessage();
+    return;
+  }
   try {
     $('#tp-saving').textContent = 'Saving…';
     trip = await action();
@@ -496,10 +497,7 @@ function renderOverview(): string {
     return [{ label: person.name, detail: uniqueLocations.map(point => point.location).join(' → '), locations: uniqueLocations, routes: personRoutes, sensitive: true }];
   }),
   ];
-  const accessWarning = trip!.id !== 'demo' && tripAccess?.mode === 'public-link'
-    ? `<aside class="tp-access-warning"><div><strong>Anyone with this link can view and edit this trip.</strong><span>${!tripAccess.hasOwner ? 'This trip is not linked to an account. The creator must sign in to claim and restrict it.' : account ? (tripAccess.canManage ? 'Choose who can view or edit.' : 'Only the trip owner can restrict access.') : 'The owner must sign in to restrict viewing and editing.'}</span></div><button class="tp-button tp-button-quiet" type="button" data-restrict-access>${tripAccess.hasOwner ? 'Restrict access' : 'Claim & restrict access'}</button></aside>`
-    : '';
-  return `${sectionHeading('', 'Overview', '')}${accessWarning}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-hero-people">${renderPersonChips(people, 'tp-person-chip-row-on-dark')}</div></section>
+  return `${sectionHeading('', 'Overview', '')}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-hero-people">${renderPersonChips(people, 'tp-person-chip-row-on-dark')}</div></section>
     <section class="tp-process"><h2>Trip progress</h2><div>${progressRows.map(row => `<button class="tp-progress-row" data-view="${row.view}"><strong>${escapeHtml(row.title)}</strong><span class="tp-progress-milestones">${row.milestones.map(milestone => `<span class="tp-progress-milestone ${milestone.done ? 'is-done' : ''}"><i>${milestone.done ? '✓' : ''}</i><small>${escapeHtml(milestone.label)}</small></span>`).join('')}</span><b>›</b></button>`).join('')}</div></section>
     <section class="tp-card-section"><h2>Itinerary</h2><div class="tp-itinerary">${itineraryFilters}${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
 }
@@ -746,7 +744,7 @@ function renderActivities(): string {
 
 function render(): void {
   if (!trip || !session) return;
-  $('#tp-app').classList.toggle('tp-read-only', !canEdit);
+  $('#tp-app').classList.toggle('tp-read-only', !canEdit && trip.id !== 'demo');
   $('#tp-title').textContent = trip.title;
   $('#tp-subtitle').textContent = `${date(trip.availabilityWindow.start)}–${date(trip.availabilityWindow.end, { day: 'numeric', month: 'short', year: 'numeric' })}`;
   const views: Record<View, () => string> = { overview: renderOverview, people: renderPeople, availability: renderAvailability, transport: renderTransport, stays: renderStays, activities: renderActivities };
@@ -765,33 +763,7 @@ function addPermissionRow(permission?: TripPermission): void {
 }
 
 function renderTripAccessSettings(): void {
-  const section = $('#tp-trip-access-settings');
-  section.hidden = trip?.id === 'demo';
-  if (section.hidden) return;
-  const access = tripAccess ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false } satisfies TripAccessState;
-  const canClaim = Boolean(account && session?.participantId && session.participantId === trip?.participants[0]?.id && !access.hasOwner);
-  const canManage = access.canManage || canClaim;
-  const summary = $('#tp-trip-access-summary');
-  if (!access.hasOwner) {
-    summary.innerHTML = !account
-      ? `This trip is not linked to an account. The original creator must <a href="${signInUrl(`${location.pathname}?trip=${trip!.id}`)}">sign in or create an account</a> to claim it before access can be restricted.`
-      : canClaim
-        ? `This trip is not linked yet. Saving these settings will claim it for <strong>${escapeHtml(account.user.email)}</strong> and add it to My trips.`
-        : 'This trip is not linked to an account. Only the original creator, using the browser that created it, can claim and restrict it.';
-  } else {
-    summary.innerHTML = access.mode === 'public-link'
-      ? account
-        ? access.canManage ? 'Anyone with the link can currently view and edit. You can restrict it below.' : 'Anyone with the link can view and edit. Only the owner can change visibility.'
-        : `Anyone with the link can view and edit. <a href="${signInUrl(`${location.pathname}?trip=${trip!.id}`)}">Sign in</a> as the owner to change access.`
-      : `This trip is restricted to the owner and ${access.permissions.length} invited account${access.permissions.length === 1 ? '' : 's'}.`;
-  }
-  const manager = $('#tp-trip-access-manager');
-  manager.hidden = !canManage;
-  if (!canManage) return;
-  const form = $<HTMLFormElement>('#tp-trip-form');
-  (form.elements.namedItem('accessMode') as RadioNodeList).value = access.mode;
-  $('#tp-permission-list').innerHTML = '';
-  access.permissions.forEach(addPermissionRow);
+  $('#tp-trip-access-settings').hidden = true;
 }
 
 async function saveAccessSettings(): Promise<void> {
@@ -1053,22 +1025,22 @@ function showTrip(result: TripResult & { session: TripSession }): void {
   trip = result.trip;
   session = result.session;
   tripAccess = result.access ?? repository.getTripAccess(result.trip.id) ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false };
-  canEdit = tripAccess.canEdit;
+  canEdit = result.trip.id === 'demo' ? false : tripAccess.canEdit;
   itineraryPersonId = '';
   history.replaceState({}, '', `${location.pathname}?trip=${trip.id}`);
   $<HTMLDialogElement>('#tp-join-dialog').close();
   $('#tp-access').hidden = true;
   $('#tp-app').hidden = false;
-  $('#tp-read-only-pill').hidden = canEdit;
-  $<HTMLAnchorElement>('#tp-sign-in-edit').href = signInUrl(`${location.pathname}?trip=${trip.id}`);
-  $('#tp-sign-in-edit').hidden = canEdit || Boolean(account);
+  const readOnlyPill = $('#tp-read-only-pill');
+  readOnlyPill.textContent = trip.id === 'demo' ? 'Demo · View only' : 'View only';
+  readOnlyPill.hidden = canEdit;
   $('#tp-import').hidden = !canEdit;
   render();
 }
 
 function requestTripIdentity(loadedTrip: Trip): void {
   trip = loadedTrip;
-  if (!canEdit) {
+  if (loadedTrip.id === 'demo' || !canEdit) {
     showTrip({ trip: loadedTrip, session: { tripId: loadedTrip.id, participantId: '', displayName: 'Guest' } });
     return;
   }
@@ -1103,7 +1075,7 @@ export async function mountTripPlanner(): Promise<void> {
   if (requestedTrip === legacyDemoId) history.replaceState({}, '', `${location.pathname}?trip=demo`);
   account = await loadAccount(savedToken);
   canEdit = true;
-  renderAccountPanel();
+  applyAccountDefaults();
   enhanceForms();
   renderSetupCalendar();
   setup.addEventListener('submit', async event => {
@@ -1115,7 +1087,7 @@ export async function mountTripPlanner(): Promise<void> {
       const result = await repository.createTrip({ displayName: formValue(setup, 'name'), title: formValue(setup, 'title'), destination: formValue(setup, 'destination'), destinationCoordinates: coordinatesFromForm(setupData, 'destination'), availabilityRanges: setupRanges.map(({ start, end }) => ({ start, end })) });
       showTrip(result);
     } catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not create the trip.'; error.hidden = false; }
-    finally { button.disabled = false; button.textContent = 'Create blank trip'; }
+    finally { button.disabled = false; button.textContent = 'Create trip'; }
   });
 
   $<HTMLFormElement>('#tp-join-form').addEventListener('submit', async event => {
@@ -1139,7 +1111,8 @@ export async function mountTripPlanner(): Promise<void> {
     trip = undefined; session = undefined;
     history.replaceState({}, '', location.pathname);
     $('#tp-app').hidden = true; $('#tp-access').hidden = false;
-    account = await loadAccount(); canEdit = true; renderAccountPanel();
+    $('#tp-access-title').textContent = 'Create a trip';
+    account = await loadAccount(); canEdit = true; applyAccountDefaults();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
   $('#tp-import').addEventListener('click', () => $<HTMLInputElement>('#tp-import-file').click());
@@ -1175,6 +1148,11 @@ export async function mountTripPlanner(): Promise<void> {
 
   $('#trip-planner-root').addEventListener('click', event => {
     const target = event.target as HTMLElement;
+    if (trip?.id === 'demo' && target.closest(demoEditSelector)) {
+      event.preventDefault();
+      showDemoReadOnlyMessage();
+      return;
+    }
     if (target.closest('#tp-add-permission')) { addPermissionRow(); return; }
     if (target.closest('#tp-save-access')) { void saveAccessSettings(); return; }
     const removePermission = target.closest<HTMLButtonElement>('[data-remove-permission]');
@@ -1279,7 +1257,6 @@ export async function mountTripPlanner(): Promise<void> {
 
   if (savedToken) {
     const title = $('#tp-access-title');
-    title.textContent = 'Loading saved trip…';
     void repository.restoreTrip(savedToken).then(result => {
       if (!result) {
         title.textContent = 'Create a trip';

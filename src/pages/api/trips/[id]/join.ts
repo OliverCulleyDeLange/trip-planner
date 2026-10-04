@@ -10,6 +10,7 @@ export const POST: APIRoute = async context => {
   if (guarded instanceof Response) return guarded;
   const tripId = context.params.id;
   if (!validTripId(tripId)) return json({ error: 'Trip not found.' }, 404);
+  if (tripId === 'demo') return json({ error: 'The demo trip can’t be edited.' }, 403);
   try {
     const user = await authenticatedUser(context, guarded.env, guarded.sessionId);
     const access = await getTripAccess(guarded.env.DB, tripId, user?.email);
