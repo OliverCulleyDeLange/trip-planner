@@ -194,6 +194,9 @@ export async function deleteAccountSession(database: D1Database, sessionId: stri
 }
 
 export async function getTripAccess(database: D1Database, tripId: string, email?: string): Promise<TripAccessState> {
+  if (tripId === 'demo') {
+    return { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: false, canManage: false };
+  }
   const row = await database.prepare(
     'SELECT mode, owner_email as ownerEmail FROM trip_access WHERE trip_id = ?',
   ).bind(tripId).first<{ mode: TripAccessMode; ownerEmail?: string }>();
