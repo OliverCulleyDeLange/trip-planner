@@ -2,7 +2,6 @@ import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, CreateTripRequest, Id, Participant,
   TransportOption, Trip, TripAccessRequest, TripExport, TripRepository, TripSession, VoteValue,
 } from './types';
-import { buildDemoTrip } from './demo';
 
 const clone = <T>(value: T): T => structuredClone(value);
 const pause = () => new Promise(resolve => window.setTimeout(resolve, 90));
@@ -23,10 +22,9 @@ function normalizeTrip(trip: Trip): Trip {
     preferences.roomPreferences ??= preferences.ownRoom === 'required'
       ? ['require-own']
       : preferences.ownRoom === 'preferred' ? ['happy-to-share', 'prefer-own'] : ['happy-to-share'];
-    preferences.bedPreferences ??= [
-      ...(preferences.ownBed ? ['own-bed' as const] : []),
-      ...(preferences.acceptsSofaBed ? ['sofa-bed' as const] : []),
-    ];
+    preferences.bedPreferences ??= preferences.ownBed ? ['own-bed'] : [];
+    preferences.bedPreferences = preferences.bedPreferences.filter(preference => (preference as string) !== 'sofa-bed');
+    preferences.acceptsSofaBed = false;
     preferences.shareWithParticipantIds ??= preferences.shareDoubleWithParticipantId ? [preferences.shareDoubleWithParticipantId] : [];
     person.baggage ??= [];
   });
@@ -105,16 +103,6 @@ export class LocalTripRepository implements TripRepository {
     };
     this.trips.set(id, trip);
     const session = { tripId: id, participantId, displayName: person.name };
-    await Promise.all([this.saveTrip(trip), this.saveSession(session)]);
-    return { trip: clone(trip), session };
-  }
-
-  async createDemoTrip(): Promise<{ trip: Trip; session: TripSession }> {
-    await pause();
-    const id = `trip_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
-    const trip = buildDemoTrip(id);
-    this.trips.set(id, trip);
-    const session = { tripId: id, participantId: 'oliver', displayName: 'Sam' };
     await Promise.all([this.saveTrip(trip), this.saveSession(session)]);
     return { trip: clone(trip), session };
   }

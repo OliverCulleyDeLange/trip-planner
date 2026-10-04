@@ -1,4 +1,3 @@
-import { buildDemoTrip } from '../trip-planner/demo';
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, CreateTripRequest, Participant,
   TransportOption, Trip, TripExport, TripSession, VoteValue,
@@ -47,11 +46,6 @@ export function createTrip(request: CreateTripRequest): { trip: Trip; session: T
   return { trip, session: { tripId: id, participantId: person.id, displayName: person.name } };
 }
 
-export function createDemo(): { trip: Trip; session: TripSession } {
-  const trip = buildDemoTrip(newTripId());
-  return { trip, session: { tripId: trip.id, participantId: 'oliver', displayName: 'Sam' } };
-}
-
 export function importTrip(exported: TripExport): { trip: Trip; session: TripSession } {
   if (exported?.schemaVersion !== 1 || !Array.isArray(exported.trip?.participants) || !exported.trip.participants.length) {
     throw new Error('This is not a valid trip planner export.');
@@ -78,6 +72,8 @@ export function normalizeTrip(trip: Trip): Trip {
     const preferences = person.sleepingPreferences;
     preferences.roomPreferences ??= preferences.ownRoom === 'required' ? ['require-own'] : ['happy-to-share'];
     preferences.bedPreferences ??= preferences.ownBed ? ['own-bed'] : [];
+    preferences.bedPreferences = preferences.bedPreferences.filter(preference => (preference as string) !== 'sofa-bed');
+    preferences.acceptsSofaBed = false;
     preferences.shareWithParticipantIds ??= preferences.shareDoubleWithParticipantId ? [preferences.shareDoubleWithParticipantId] : [];
   });
   return trip;

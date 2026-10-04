@@ -9,7 +9,7 @@ export type VoteValue = 'first-choice' | 'acceptable' | 'unacceptable';
 export type BedType = 'single' | 'double' | 'king' | 'bunk' | 'sofa-bed';
 export type Sex = 'female' | 'male' | 'other' | 'prefer-not-to-say';
 export type RoomPreference = 'happy-to-share' | 'prefer-own' | 'require-own';
-export type BedPreference = 'own-bed' | 'sofa-bed' | 'share-anyone' | 'share-women' | 'share-men';
+export type BedPreference = 'own-bed' | 'share-anyone' | 'share-women' | 'share-men';
 
 export interface GeoCoordinates {
   latitude: number;
@@ -104,6 +104,7 @@ export interface Room {
 export interface AccommodationOption {
   id: Id;
   status: PlanStatus;
+  participantIds?: Id[];
   name: string;
   platform: string;
   sourceUrl: string;
@@ -126,6 +127,7 @@ export interface AccommodationOption {
 export interface ActivityOption {
   id: Id;
   status: PlanStatus;
+  participantIds?: Id[];
   name: string;
   category?: string;
   location?: string;
@@ -178,6 +180,20 @@ export interface TripAccessRequest {
   displayName: string;
 }
 
+export type TripAccessMode = 'public-link' | 'restricted';
+export type TripPermissionRole = 'viewer' | 'editor';
+export interface TripPermission { email: string; role: TripPermissionRole }
+export interface TripAccessState {
+  mode: TripAccessMode;
+  hasOwner: boolean;
+  ownerEmail?: string;
+  permissions: TripPermission[];
+  role: 'owner' | TripPermissionRole | 'public';
+  canView: boolean;
+  canEdit: boolean;
+  canManage: boolean;
+}
+
 export interface CreateTripRequest {
   displayName: string;
   title: string;
@@ -188,7 +204,6 @@ export interface CreateTripRequest {
 
 export interface TripRepository {
   createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }>;
-  createDemoTrip(): Promise<{ trip: Trip; session: TripSession }>;
   importTrip(exported: TripExport): Promise<{ trip: Trip; session: TripSession }>;
   restoreTrip(tripId: string): Promise<{ trip: Trip; session?: TripSession } | undefined>;
   accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }>;

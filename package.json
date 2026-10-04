@@ -12,15 +12,18 @@
     "check": "astro check",
     "preview": "wrangler dev",
     "test": "vitest run",
+    "db:generate-demo": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/generate-demo-migration.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:preview": "wrangler d1 migrations apply DB --remote --env preview",
     "db:migrate:production": "wrangler d1 migrations apply DB --remote",
     "deploy:preview": "CLOUDFLARE_ENV=preview pnpm build && wrangler deploy --env preview",
-    "deploy:production": "pnpm build && wrangler deploy"
+    "deploy:production": "pnpm build && wrangler deploy",
+    "deploy:domain-proxy": "wrangler deploy --config domain-proxy/wrangler.jsonc"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^13.7.0",
-    "astro": "^6.2.1"
+    "astro": "^6.2.1",
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

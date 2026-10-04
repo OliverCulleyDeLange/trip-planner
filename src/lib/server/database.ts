@@ -5,6 +5,28 @@ type TripRow = {
   id: string; core_json: string; revision: number; write_token: string; created_at: string; updated_at: string;
 };
 type PayloadRow = { payload: string };
+type MembershipRow = { tripId: string; participantId: string; displayName: string };
+
+export interface AccountTripSummary {
+  id: string;
+  title: string;
+  destination: string;
+  start: string;
+  end: string;
+  stage: Trip['stage'];
+  updatedAt: string;
+}
+
+export type TripAccessMode = 'public-link' | 'restricted';
+export type TripPermissionRole = 'viewer' | 'editor';
+export interface TripPermission { email: string; role: TripPermissionRole }
+export interface TripAccessRecord { mode: TripAccessMode; hasOwner: boolean; ownerEmail?: string; permissions: TripPermission[] }
+export interface TripAccessState extends TripAccessRecord {
+  role: 'owner' | TripPermissionRole | 'public';
+  canView: boolean;
+  canEdit: boolean;
+  canManage: boolean;
+}
 
 const childTables = [
   ['participants', 'participants'],
@@ -116,6 +138,108 @@ export async function saveTripSession(database: D1Database, sessionId: string, s
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id, trip_id) DO UPDATE SET participant_id = excluded.participant_id, display_name = excluded.display_name, updated_at = excluded.updated_at`,
   ).bind(sessionId, session.tripId, session.participantId, session.displayName, now, now).run();
+}
+
+export async function saveTripMembership(database: D1Database, email: string, session: TripSession): Promise<void> {
+  const now = new Date().toISOString();
+  await database.prepare(
+    `INSERT INTO trip_memberships (user_email, trip_id, participant_id, display_name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_email, trip_id) DO UPDATE SET participant_id = excluded.participant_id, display_name = excluded.display_name, updated_at = excluded.updated_at`,
+  ).bind(email, session.tripId, session.participantId, session.displayName, now, now).run();
+}
+
+export async function getTripMembership(database: D1Database, email: string, tripId: string): Promise<TripSession | undefined> {
+  const row = await database.prepare(
+    'SELECT trip_id as tripId, participant_id as participantId, display_name as displayName FROM trip_memberships WHERE user_email = ? AND trip_id = ?',
+  ).bind(email, tripId).first<MembershipRow>();
+  return row ?? undefined;
+}
+
+export async function listAccountTrips(database: D1Database, email: string): Promise<AccountTripSummary[]> {
+  const rows = await database.prepare(
+    `SELECT DISTINCT trips.id, trips.core_json as coreJson, trips.updated_at as updatedAt
+     FROM trips
+     LEFT JOIN trip_memberships ON trip_memberships.trip_id = trips.id AND trip_memberships.user_email = ?
+     LEFT JOIN trip_permissions ON trip_permissions.trip_id = trips.id AND trip_permissions.user_email = ?
+     LEFT JOIN trip_access ON trip_access.trip_id = trips.id
+     WHERE trip_memberships.user_email IS NOT NULL OR trip_permissions.user_email IS NOT NULL OR trip_access.owner_email = ?
+     ORDER BY trips.updated_at DESC`,
+  ).bind(email, email, email).all<{ id: string; coreJson: string; updatedAt: string }>();
+  return rows.results.map(row => {
+    const core = JSON.parse(row.coreJson) as Trip;
+    const dates = core.preferredDateRange ?? core.dateRange;
+    return { id: row.id, title: core.title, destination: core.destination, start: dates.start, end: dates.end, stage: core.stage, updatedAt: row.updatedAt };
+  });
+}
+
+export async function saveAccountSession(database: D1Database, sessionId: string, email: string, name: string): Promise<void> {
+  const now = new Date();
+  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  await database.prepare(
+    `INSERT INTO account_sessions (session_id, user_email, display_name, expires_at, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET user_email = excluded.user_email, display_name = excluded.display_name, expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
+  ).bind(sessionId, email, name, expires, now.toISOString()).run();
+}
+
+export async function getAccountSession(database: D1Database, sessionId: string): Promise<{ email: string; name: string } | undefined> {
+  const row = await database.prepare(
+    'SELECT user_email as email, display_name as name FROM account_sessions WHERE session_id = ? AND expires_at > ?',
+  ).bind(sessionId, new Date().toISOString()).first<{ email: string; name: string }>();
+  return row ?? undefined;
+}
+
+export async function deleteAccountSession(database: D1Database, sessionId: string): Promise<void> {
+  await database.prepare('DELETE FROM account_sessions WHERE session_id = ?').bind(sessionId).run();
+}
+
+export async function getTripAccess(database: D1Database, tripId: string, email?: string): Promise<TripAccessState> {
+  const row = await database.prepare(
+    'SELECT mode, owner_email as ownerEmail FROM trip_access WHERE trip_id = ?',
+  ).bind(tripId).first<{ mode: TripAccessMode; ownerEmail?: string }>();
+  const mode = row?.mode ?? 'public-link';
+  const ownerEmail = row?.ownerEmail?.toLowerCase();
+  const permissionRows = await database.prepare(
+    'SELECT user_email as email, role FROM trip_permissions WHERE trip_id = ? ORDER BY user_email',
+  ).bind(tripId).all<TripPermission>();
+  const permissions = permissionRows.results;
+  const normalizedEmail = email?.toLowerCase();
+  const permission = normalizedEmail ? permissions.find(candidate => candidate.email === normalizedEmail) : undefined;
+  const role = normalizedEmail && ownerEmail === normalizedEmail ? 'owner' : permission?.role ?? 'public';
+  const canView = mode === 'public-link' || role !== 'public';
+  const canEdit = mode === 'public-link' || role === 'owner' || role === 'editor';
+  const canManage = role === 'owner';
+  return { mode, hasOwner: Boolean(ownerEmail), ownerEmail: canManage ? ownerEmail : undefined, permissions: canManage ? permissions : [], role, canView, canEdit, canManage };
+}
+
+export async function getTripOwnerEmail(database: D1Database, tripId: string): Promise<string | undefined> {
+  const row = await database.prepare('SELECT owner_email as ownerEmail FROM trip_access WHERE trip_id = ?').bind(tripId).first<{ ownerEmail?: string }>();
+  return row?.ownerEmail?.toLowerCase();
+}
+
+export async function createTripAccess(database: D1Database, tripId: string, ownerEmail?: string): Promise<void> {
+  const now = new Date().toISOString();
+  await database.prepare(
+    `INSERT OR IGNORE INTO trip_access (trip_id, mode, owner_email, created_at, updated_at) VALUES (?, 'public-link', ?, ?, ?)`,
+  ).bind(tripId, ownerEmail?.toLowerCase() ?? null, now, now).run();
+}
+
+export async function saveTripAccess(database: D1Database, tripId: string, ownerEmail: string, mode: TripAccessMode, permissions: TripPermission[]): Promise<void> {
+  const now = new Date().toISOString();
+  const normalizedOwner = ownerEmail.toLowerCase();
+  const statements: D1PreparedStatement[] = [
+    database.prepare(
+      `INSERT INTO trip_access (trip_id, mode, owner_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(trip_id) DO UPDATE SET mode = excluded.mode, owner_email = excluded.owner_email, updated_at = excluded.updated_at`,
+    ).bind(tripId, mode, normalizedOwner, now, now),
+    database.prepare('DELETE FROM trip_permissions WHERE trip_id = ?').bind(tripId),
+  ];
+  for (const permission of permissions) {
+    statements.push(database.prepare(
+      'INSERT INTO trip_permissions (trip_id, user_email, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(tripId, permission.email.toLowerCase(), permission.role, now, now));
+  }
+  await database.batch(statements);
 }
 
 export async function enforceRateLimit(database: D1Database, sessionId: string, limit = 120): Promise<boolean> {

@@ -1,0 +1,2 @@
+UPDATE activities SET payload = json_set(payload, '$.location', 'Cité Vauban, Briançon', '$.locationCoordinates.latitude', 44.8994, '$.locationCoordinates.longitude', 6.6433) WHERE trip_id = 'demo' AND id = 'activity-1';
+UPDATE activities SET payload = json_set(payload, '$.locationCoordinates.latitude', 44.9447, '$.locationCoordinates.longitude', 6.5717) WHERE trip_id = 'demo' AND id = 'activity-2';

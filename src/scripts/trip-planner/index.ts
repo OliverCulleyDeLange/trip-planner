@@ -1,16 +1,24 @@
-import { ApiTripRepository, RevisionConflictError } from '../../lib/trip-planner/api-repository';
+import { ApiTripRepository, RevisionConflictError, type TripResult } from '../../lib/trip-planner/api-repository';
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, BedType, BaggageItem, GeoCoordinates, Participant,
-  Room, TransportMode, TransportOption, Trip, TripExport, TripSession, VoteValue,
+  Room, TransportMode, TransportOption, Trip, TripAccessState, TripExport, TripPermission, TripSession, VoteValue,
 } from '../../lib/trip-planner/types';
 
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
+type AccountTrip = { id: string; title: string; destination: string; start: string; end: string; stage: string; updatedAt: string };
+type AccountState = { user: { email: string; name: string }; tripSession?: TripSession; trips: AccountTrip[] };
 
 const repository = new ApiTripRepository();
+const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 let trip: Trip | undefined;
 let session: TripSession | undefined;
+let account: AccountState | undefined;
+let tripAccess: TripAccessState | undefined;
+let canEdit = false;
 let activeView: View = 'overview';
 let itineraryPersonId = '';
+let itineraryLayout: 'list' | 'calendar' = localStorage.getItem('trip-planner:itinerary-layout') === 'calendar' ? 'calendar' : 'list';
+let planningPersonId = '';
 let toastTimer = 0;
 let setupCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let setupDraftStart: string | undefined;
@@ -50,6 +58,36 @@ type JourneyMap = { label: string; detail: string; locations: MapPoint[]; routes
 const geocodingAvailable = true;
 const locationAutocompleteTimers = new WeakMap<HTMLInputElement, number>();
 const locationAutocompleteControllers = new WeakMap<HTMLInputElement, AbortController>();
+
+function signInUrl(returnTo = `${location.pathname}${location.search}`): string {
+  return `${appBase}/api/account/login?return=${encodeURIComponent(returnTo)}`;
+}
+
+async function loadAccount(tripId?: string): Promise<AccountState | undefined> {
+  try {
+    const query = tripId ? `?trip=${encodeURIComponent(tripId)}` : '';
+    const response = await fetch(`${appBase}/api/account/session${query}`, { credentials: 'same-origin', redirect: 'manual' });
+    if (!response.ok || response.type === 'opaqueredirect') return undefined;
+    return await response.json() as AccountState;
+  } catch {
+    return undefined;
+  }
+}
+
+function renderAccountPanel(): void {
+  const signedOut = $('#tp-account-signed-out');
+  const signedIn = $('#tp-account-signed-in');
+  const createArea = $('#tp-create-area');
+  signedOut.hidden = Boolean(account);
+  signedIn.hidden = !account;
+  createArea.hidden = false;
+  $<HTMLAnchorElement>('#tp-account-sign-in').href = signInUrl(location.pathname);
+  if (!account) return;
+  $('#tp-account-welcome').textContent = `Welcome, ${account.user.name}`;
+  $('#tp-trip-library').innerHTML = account.trips.map(saved => `<a class="tp-library-card" href="${location.pathname}?trip=${encodeURIComponent(saved.id)}"><strong>${escapeHtml(saved.title)}</strong><span>${escapeHtml(saved.destination)}</span><small>${date(saved.start, { day: 'numeric', month: 'short' })}–${date(saved.end, { day: 'numeric', month: 'short', year: 'numeric' })}</small></a>`).join('');
+  const name = $<HTMLInputElement>('#tp-name');
+  if (!name.value) name.value = account.user.name;
+}
 
 function coordinatesFromForm(data: FormData, name: string): GeoCoordinates | undefined {
   const latitudeValue = String(data.get(`${name}Latitude`) ?? '');
@@ -205,6 +243,42 @@ function avatar(person: Participant, label = true): string {
   return `<span class="tp-avatar-wrap" title="${escapeHtml(person.name)}"><span class="tp-avatar" style="--person:${person.colour}">${escapeHtml(person.initials)}</span>${label ? `<span>${escapeHtml(person.name)}</span>` : ''}</span>`;
 }
 
+function groupCouples(people: Participant[]): Participant[][] {
+  const included = new Set(people.map(person => person.id));
+  const grouped = new Set<string>();
+  return people.flatMap(person => {
+    if (grouped.has(person.id)) return [];
+    const partner = trip!.participants.find(candidate => candidate.id === person.sleepingPreferences.shareDoubleWithParticipantId && included.has(candidate.id))
+      ?? people.find(candidate => candidate.id !== person.id && candidate.sleepingPreferences.shareDoubleWithParticipantId === person.id);
+    grouped.add(person.id);
+    if (!partner || grouped.has(partner.id)) return [[person]];
+    grouped.add(partner.id);
+    return [[person, partner]];
+  });
+}
+
+function renderPersonChips(people: Participant[], className = ''): string {
+  if (!people.length) return '';
+  return `<div class="tp-person-chip-row ${className}" aria-label="People involved">${groupCouples(people).map(group => {
+    const label = group.map(person => person.name).join(' & ');
+    return `<span class="tp-person-name-chip${group.length > 1 ? ' is-couple' : ''}" title="${escapeHtml(label)}"><span class="tp-person-chip-avatars">${group.map(person => `<i style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span><b>${escapeHtml(label)}</b></span>`;
+  }).join('')}</div>`;
+}
+
+function isRelevantTo(option: { participantIds?: string[] }, personId: string): boolean {
+  return !personId || !option.participantIds?.length || option.participantIds.includes(personId);
+}
+
+function renderPlanningPersonFilter(label: string): string {
+  if (planningPersonId && !trip!.participants.some(person => person.id === planningPersonId)) planningPersonId = '';
+  return `<div class="tp-itinerary-filter tp-planning-filter" aria-label="Filter ${label} by traveller"><button class="${planningPersonId ? '' : 'active'}" data-planning-person="" aria-pressed="${!planningPersonId}">Everyone</button>${trip!.participants.map(person => `<button class="${planningPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-planning-person="${person.id}" aria-pressed="${planningPersonId === person.id}"><i></i>${escapeHtml(person.name)}${person.id === session?.participantId ? ' (me)' : ''}</button>`).join('')}</div>`;
+}
+
+function renderParticipantChecks(container: HTMLElement, selectedIds?: string[]): void {
+  const selected = selectedIds?.length ? selectedIds : trip!.participants.map(person => person.id);
+  container.innerHTML = trip!.participants.map(person => `<label><input type="checkbox" name="participants" value="${person.id}" ${selected.includes(person.id) ? 'checked' : ''} />${avatar(person)}</label>`).join('');
+}
+
 function showToast(message: string): void {
   const element = $('#tp-toast');
   element.textContent = message;
@@ -243,7 +317,7 @@ function renderMapPanel(title: string, maps: JourneyMap[]): string {
   const encoded = (value: unknown) => encodeURIComponent(JSON.stringify(value));
   const modes = [...new Set(maps.flatMap(map => map.routes?.map(route => route.mode) ?? []))];
   const legend = modes.length ? `<div class="tp-map-legend" aria-label="Transport colours">${modes.map(mode => `<span style="--route:${routeColourForMode[mode]}"><i></i>${iconForMode[mode]} ${modeLabel[mode]}</span>`).join('')}</div>` : '';
-  return `<section class="tp-map-panel" data-map-panel><div class="tp-panel-head"><div><h2>${escapeHtml(title)}</h2><p class="tp-map-detail">${escapeHtml(maps[0].detail)}</p></div></div><div class="tp-map-canvas" role="region" aria-label="${escapeHtml(title)}" data-map-sensitive="${Boolean(maps[0].sensitive)}" data-map-locations="${encoded(maps[0].locations)}" data-map-routes="${encoded(maps[0].routes ?? [])}"><p class="tp-map-loading">Loading map…</p></div>${legend}<div class="tp-map-switcher">${maps.map((map, index) => `<button class="${index === 0 ? 'active' : ''}" data-map-locations="${encoded(map.locations)}" data-map-routes="${encoded(map.routes ?? [])}" data-map-sensitive="${Boolean(map.sensitive)}" data-map-detail="${escapeHtml(map.detail)}">${escapeHtml(map.label)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></section>`;
+  return `<section class="tp-card-section tp-map-section" data-map-panel><div class="tp-card-section-heading"><h2>${escapeHtml(title)}</h2><p class="tp-map-detail">${escapeHtml(maps[0].detail)}</p></div><div class="tp-map-panel"><div class="tp-map-canvas" role="region" aria-label="${escapeHtml(title)}" data-map-sensitive="${Boolean(maps[0].sensitive)}" data-map-locations="${encoded(maps[0].locations)}" data-map-routes="${encoded(maps[0].routes ?? [])}"><p class="tp-map-loading">Loading map…</p></div>${legend}<div class="tp-map-switcher">${maps.map((map, index) => `<button class="${index === 0 ? 'active' : ''}" data-map-locations="${encoded(map.locations)}" data-map-routes="${encoded(map.routes ?? [])}" data-map-sensitive="${Boolean(map.sensitive)}" data-map-detail="${escapeHtml(map.detail)}">${escapeHtml(map.label)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></div></section>`;
 }
 
 function renderAddressMap(people: Participant[]): string {
@@ -260,45 +334,58 @@ function renderAddressMap(people: Participant[]): string {
   });
   const visiblePoints = points.filter(point => !hiddenIds.includes(point.id));
   const encoded = (value: unknown) => encodeURIComponent(JSON.stringify(value));
-  return `<section class="tp-map-panel tp-address-map" data-map-panel data-address-map data-map-storage-key="${escapeHtml(storageKey)}"><div class="tp-panel-head"><div><h2>Address map</h2><p class="tp-map-detail">${visiblePoints.length}/${points.length} people shown</p></div></div><div class="tp-map-canvas" role="region" aria-label="Address map" data-map-connect="false" data-map-sensitive="true" data-map-locations="${encoded(visiblePoints)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher tp-person-map-toggles">${points.map(point => `<button class="${hiddenIds.includes(point.id) ? '' : 'active'}" type="button" style="--person:${point.colour}" data-map-person-id="${escapeHtml(point.id)}" data-map-person-point="${encoded(point)}" aria-pressed="${!hiddenIds.includes(point.id)}"><i></i>${escapeHtml(point.label!)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></section>`;
+  return `<section class="tp-card-section tp-map-section tp-address-map" data-map-panel data-address-map data-map-storage-key="${escapeHtml(storageKey)}"><div class="tp-card-section-heading"><h2>Address map</h2><p class="tp-map-detail">${visiblePoints.length}/${points.length} people shown</p></div><div class="tp-map-panel"><div class="tp-map-canvas" role="region" aria-label="Address map" data-map-connect="false" data-map-sensitive="true" data-map-locations="${encoded(visiblePoints)}"><p class="tp-map-loading">Loading map…</p></div><div class="tp-map-switcher tp-person-map-toggles">${points.map(point => `<button class="${hiddenIds.includes(point.id) ? '' : 'active'}" type="button" style="--person:${point.colour}" data-map-person-id="${escapeHtml(point.id)}" data-map-person-point="${encoded(point)}" aria-pressed="${!hiddenIds.includes(point.id)}"><i></i>${escapeHtml(point.label!)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></div></section>`;
 }
 
 function renderOverview(): string {
   const people = trip!.participants;
   if (itineraryPersonId && !people.some(person => person.id === itineraryPersonId)) itineraryPersonId = '';
   const availabilityDone = people.filter(person => trip!.availability.some(entry => entry.participantId === person.id && entry.status === 'available')).length;
-  const pollOptionsReady = trip!.transportOptions.length > 0 && trip!.accommodationOptions.length > 0;
-  const voterDone = people.filter(person => (
-    trip!.transportOptions.every(option => Boolean(option.votes[person.id])) &&
-    trip!.accommodationOptions.every(option => Boolean(option.votes[person.id]))
-  )).length;
-  const selectedTransport = trip!.transportOptions.filter(option => option.status === 'selected');
-  const selectedStay = trip!.accommodationOptions.find(option => option.status === 'selected');
-  const itineraryTransport = trip!.transportOptions;
-  const itineraryStays = trip!.accommodationOptions;
-  const itineraryActivities = trip!.activities;
-  const selectedItems = [...selectedTransport, ...(selectedStay ? [selectedStay] : [])];
-  const booked = selectedItems.filter(option => Boolean(option.bookingReference?.trim())).length;
+  const isItineraryChoice = (status: TransportOption['status']) => status === 'selected' || status === 'booked';
+  const isBooked = (option: { status: TransportOption['status']; bookingReference?: string }) => option.status === 'booked' || Boolean(option.bookingReference?.trim());
+  const selectedTransport = trip!.transportOptions.filter(option => isItineraryChoice(option.status));
+  const selectedStay = trip!.accommodationOptions.find(option => isItineraryChoice(option.status));
+  const selectedActivities = trip!.activities.filter(option => isItineraryChoice(option.status));
+  const itineraryTransport = trip!.transportOptions.filter(option => isItineraryChoice(option.status));
+  const itineraryStays = trip!.accommodationOptions.filter(option => isItineraryChoice(option.status));
+  const itineraryActivities = trip!.activities.filter(option => isItineraryChoice(option.status));
+  const pollComplete = (options: { votes: Record<string, VoteValue>; participantIds?: string[] }[]) => options.length > 0 && options.every(option => {
+    const relevantPeople = option.participantIds?.length ? people.filter(person => option.participantIds!.includes(person.id)) : people;
+    return relevantPeople.length > 0 && relevantPeople.every(person => Boolean(option.votes[person.id]));
+  });
   const datesLabel = trip!.preferredDateRange
     ? `${date(trip!.preferredDateRange.start, { day: 'numeric', month: 'long' })}–${date(trip!.preferredDateRange.end, { day: 'numeric', month: 'long', year: 'numeric' })}`
     : `${trip!.availabilityRanges.length} candidate date range${trip!.availabilityRanges.length === 1 ? '' : 's'}`;
-  const stages = [
-    { title: 'Potential dates', detail: `${trip!.availabilityRanges.length} range${trip!.availabilityRanges.length === 1 ? '' : 's'} set`, done: trip!.availabilityRanges.length > 0, view: 'availability' },
-    { title: 'Availability poll', detail: `${availabilityDone}/${people.length} people completed`, done: people.length > 0 && availabilityDone === people.length, view: 'availability' },
-    { title: 'Preferred dates', detail: trip!.preferredDateRange ? datesLabel : 'Not selected', done: Boolean(trip!.preferredDateRange), view: 'availability' },
-    { title: 'Transport and accommodation options', detail: `${trip!.transportOptions.length} transport · ${trip!.accommodationOptions.length} stays`, done: trip!.transportOptions.length > 0 && trip!.accommodationOptions.length > 0, view: 'transport' },
-    { title: 'Transport and accommodation poll', detail: pollOptionsReady ? `${voterDone}/${people.length} people voted` : 'Add transport and stays first', done: people.length > 0 && voterDone === people.length && pollOptionsReady, view: 'transport' },
-    { title: 'Preferred transport and accommodation', detail: `${selectedTransport.length} transport selected · ${selectedStay ? selectedStay.name : 'no stay selected'}`, done: selectedTransport.length > 0 && Boolean(selectedStay), view: 'transport' },
-    { title: 'Booked!', detail: selectedItems.length ? `${booked}/${selectedItems.length} booking references added` : 'No selected bookings', done: selectedItems.length > 1 && booked === selectedItems.length, view: 'transport' },
+  const progressRows = [
+    { title: 'Dates', view: 'availability', milestones: [
+      { label: 'Potential dates added', done: trip!.availabilityRanges.length > 0 },
+      { label: 'Polling complete', done: people.length > 0 && availabilityDone === people.length },
+      { label: 'Dates locked in', done: Boolean(trip!.preferredDateRange) },
+    ] },
+    { title: 'Transport', view: 'transport', milestones: [
+      { label: 'Options added', done: trip!.transportOptions.length > 0 },
+      { label: 'Polling complete', done: pollComplete(trip!.transportOptions) },
+      { label: 'Transport booked', done: selectedTransport.length > 0 && selectedTransport.every(isBooked) },
+    ] },
+    { title: 'Accommodation', view: 'stays', milestones: [
+      { label: 'Options added', done: trip!.accommodationOptions.length > 0 },
+      { label: 'Polling complete', done: pollComplete(trip!.accommodationOptions) },
+      { label: 'Accommodation booked', done: Boolean(selectedStay && isBooked(selectedStay)) },
+    ] },
+    { title: 'Activities', view: 'activities', milestones: [
+      { label: 'Ideas added', done: trip!.activities.length > 0 },
+      { label: 'Polling complete', done: pollComplete(trip!.activities) },
+      { label: 'Activities confirmed', done: selectedActivities.length > 0 },
+    ] },
   ];
   const returnStart = itineraryStays.map(option => option.checkOut).filter(Boolean).sort()[0]
     ?? trip!.preferredDateRange?.end
     ?? trip!.dateRange.end;
-  const isConfirmed = (status: TransportOption['status']) => status === 'selected' || status === 'booked';
   const visibleItineraryTransport = itineraryPersonId ? itineraryTransport.filter(option => option.participantIds.includes(itineraryPersonId)) : itineraryTransport;
-  const transportItems = visibleItineraryTransport.map(option => ({ when: option.departureAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), editAttribute: `data-edit-transport="${option.id}"` }));
-  const accommodationItems = itineraryStays.map(option => ({ when: option.checkIn, sortWhen: option.checkIn, icon: '🏠', title: option.name, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', option.location].filter(Boolean).join(' · '), editAttribute: `data-edit-stay="${option.id}"` }));
-  const activityItems = itineraryActivities.map(option => ({ when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, confirmed: isConfirmed(option.status), detail: [isConfirmed(option.status) ? 'Confirmed' : 'Option', option.location || option.category || ''].filter(Boolean).join(' · '), editAttribute: `data-edit-activity="${option.id}"` }));
+  const peopleFor = (participantIds?: string[]) => participantIds?.length ? people.filter(person => participantIds.includes(person.id)) : people;
+  const transportItems = visibleItineraryTransport.map(option => ({ kind: 'transport' as const, when: option.departureAt, endWhen: option.arrivalAt, sortWhen: option.departureAt, icon: iconForMode[option.mode], title: option.title, booked: isBooked(option), detail: [isBooked(option) ? 'Booked' : 'Selected', [option.origin, option.destination].filter(Boolean).join(' → ')].filter(Boolean).join(' · '), people: peopleFor(option.participantIds), editAttribute: `data-edit-transport="${option.id}"` }));
+  const accommodationItems = itineraryStays.filter(option => isRelevantTo(option, itineraryPersonId)).map(option => ({ kind: 'stay' as const, when: option.checkIn, endWhen: option.checkOut, sortWhen: option.checkIn, icon: '🏠', title: option.name, booked: isBooked(option), detail: [isBooked(option) ? 'Booked' : 'Selected', option.location].filter(Boolean).join(' · '), people: peopleFor(option.participantIds), editAttribute: `data-edit-stay="${option.id}"` }));
+  const activityItems = itineraryActivities.filter(option => isRelevantTo(option, itineraryPersonId)).map(option => ({ kind: 'activity' as const, when: option.date ? `${option.date}T${option.time || '12:00'}` : '', sortWhen: option.date ? `${option.date}T${option.time || '12:00'}` : '', icon: '✦', title: option.name, booked: option.status === 'booked', detail: [option.status === 'booked' ? 'Booked' : 'Confirmed', option.location || option.category || ''].filter(Boolean).join(' · '), people: peopleFor(option.participantIds), editAttribute: `data-edit-activity="${option.id}"` }));
   const itineraryGroups = [
     { title: 'Journey there', empty: 'No outbound travel added yet.', items: transportItems.filter(item => !item.when || item.when.slice(0, 10) < returnStart) },
     { title: 'Accommodation', empty: 'No accommodation added yet.', items: accommodationItems },
@@ -306,12 +393,75 @@ function renderOverview(): string {
     { title: 'Journey back', empty: 'No return travel added yet.', items: transportItems.filter(item => item.when && item.when.slice(0, 10) >= returnStart) },
   ];
   itineraryGroups.forEach(group => group.items.sort((a, b) => (a.sortWhen || '9999').localeCompare(b.sortWhen || '9999')));
-  const renderItineraryItem = (item: typeof transportItems[number]) => {
-    const confirmation = item.confirmed ? 'Confirmed itinerary choice' : 'Not confirmed — still an option';
-    return `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><span class="tp-itinerary-title"><strong>${escapeHtml(item.title)}</strong><span class="tp-confirmation ${item.confirmed ? 'is-confirmed' : 'is-pending'}" role="img" tabindex="0" aria-label="${confirmation}" data-tooltip="${confirmation}" title="${confirmation}">${item.confirmed ? '✓' : '?'}</span></span><small>${escapeHtml(item.detail)}</small></div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
+  type ItineraryItem = (typeof transportItems | typeof accommodationItems | typeof activityItems)[number];
+  const renderItineraryItem = (item: ItineraryItem) => {
+    const bookingStatus = item.booked ? 'Booked' : 'Selected, not booked';
+    return `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><span class="tp-itinerary-title"><strong>${escapeHtml(item.title)}</strong><span class="tp-confirmation ${item.booked ? 'is-confirmed' : 'is-pending'}" role="img" tabindex="0" aria-label="${bookingStatus}" data-tooltip="${bookingStatus}" title="${bookingStatus}">${item.booked ? '✓' : '○'}</span></span><small>${escapeHtml(item.detail)}</small>${renderPersonChips(item.people)}</div><button class="tp-edit-button" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
   };
-  const itineraryContent = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
-  const itineraryFilters = `<div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div>`;
+  const itineraryList = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
+  const calendarDates = range(trip!.preferredDateRange?.start ?? trip!.dateRange.start, trip!.preferredDateRange?.end ?? trip!.dateRange.end);
+  const calendarEvents = [...transportItems, ...activityItems].filter(item => item.when?.includes('T'));
+  const minutesFromMidnight = (value: string) => Number(value.slice(11, 13)) * 60 + Number(value.slice(14, 16));
+  const rawCalendarEvents = calendarEvents.flatMap(item => {
+    const dayIndex = calendarDates.indexOf(item.when.slice(0, 10));
+    if (dayIndex < 0) return [];
+    const start = minutesFromMidnight(item.when);
+    const explicitEnd = 'endWhen' in item && item.endWhen?.slice(0, 10) === item.when.slice(0, 10) ? minutesFromMidnight(item.endWhen) : undefined;
+    return [{ item, dayIndex, start, end: Math.max(explicitEnd ?? start + 90, start + 30), lane: 0, lanes: 1 }];
+  });
+  calendarDates.forEach((_, dayIndex) => {
+    const dayEvents = rawCalendarEvents.filter(event => event.dayIndex === dayIndex).sort((a, b) => a.start - b.start || a.end - b.end);
+    let cluster: typeof dayEvents = [];
+    let clusterEnd = -1;
+    const placeCluster = () => {
+      const laneEnds: number[] = [];
+      cluster.forEach(event => {
+        const availableLane = laneEnds.findIndex(end => end <= event.start);
+        event.lane = availableLane < 0 ? laneEnds.length : availableLane;
+        laneEnds[event.lane] = event.end;
+      });
+      cluster.forEach(event => { event.lanes = laneEnds.length; });
+    };
+    dayEvents.forEach(event => {
+      if (cluster.length && event.start >= clusterEnd) { placeCluster(); cluster = []; }
+      cluster.push(event);
+      clusterEnd = Math.max(clusterEnd, event.end);
+    });
+    if (cluster.length) placeCluster();
+  });
+  const earliestMinute = rawCalendarEvents.length ? Math.min(...rawCalendarEvents.map(event => event.start)) : 8 * 60;
+  const latestMinute = rawCalendarEvents.length ? Math.max(...rawCalendarEvents.map(event => event.end)) : 20 * 60;
+  const startHour = Math.max(0, Math.floor(earliestMinute / 60) - 1);
+  const endHour = Math.min(24, Math.ceil(latestMinute / 60) + 1);
+  const hourHeight = 56;
+  const scheduleHeight = (endHour - startHour) * hourHeight;
+  const hourLabels = Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index);
+  const minimumEventWidth = 92;
+  const defaultDayWidth = 180;
+  const dayLaneCounts = calendarDates.map((_, dayIndex) => Math.max(1, ...rawCalendarEvents.filter(event => event.dayIndex === dayIndex).map(event => event.lanes)));
+  const dayWidths = dayLaneCounts.map(lanes => lanes > 2 ? lanes * minimumEventWidth : defaultDayWidth);
+  const dayStarts = dayWidths.map((_, index) => dayWidths.slice(0, index).reduce((total, width) => total + width, 0));
+  const dayColumns = dayWidths.map(width => `${width}px`).join(' ');
+  const stayBars = accommodationItems.flatMap((item, row) => {
+    const startIndex = Math.max(0, calendarDates.indexOf(item.when));
+    const checkoutIndex = calendarDates.indexOf(item.endWhen);
+    const endIndex = checkoutIndex < 0 ? calendarDates.length : Math.max(startIndex + 1, checkoutIndex);
+    const span = Math.max(1, endIndex - startIndex);
+    return [`<button class="tp-itinerary-stay-bar" style="grid-column:${startIndex + 1} / span ${span};grid-row:${row + 1}" ${item.editAttribute} title="${escapeHtml(item.detail)}"><span>${item.icon}</span><strong>${escapeHtml(item.title)}</strong><small>${date(item.when, { day: 'numeric', month: 'short' })}–${date(item.endWhen, { day: 'numeric', month: 'short' })}</small></button>`];
+  }).join('');
+  const timedEvents = rawCalendarEvents.map(event => {
+    const laneWidth = dayWidths[event.dayIndex] / event.lanes;
+    const left = dayStarts[event.dayIndex] + event.lane * laneWidth;
+    const width = laneWidth - 6;
+    const top = (event.start - startHour * 60) / 60 * hourHeight;
+    const height = Math.max(38, (event.end - event.start) / 60 * hourHeight);
+    const endLabel = `${String(Math.floor(event.end / 60) % 24).padStart(2, '0')}:${String(event.end % 60).padStart(2, '0')}`;
+    const densityClass = event.lanes > 2 ? ' is-dense' : event.lanes > 1 ? ' is-compact' : '';
+    return `<button class="tp-itinerary-timed-event tp-calendar-${event.item.kind}${densityClass}" style="left:${left + 3}px;width:${width}px;top:${top}px;height:${height}px" ${event.item.editAttribute} aria-label="Edit ${escapeHtml(event.item.title)}"><span>${event.item.icon} ${date(event.item.when, { hour: '2-digit', minute: '2-digit' })}–${endLabel}</span><strong>${escapeHtml(event.item.title)}</strong><small>${escapeHtml(event.item.detail.replace(/^(Booked|Selected|Confirmed) · /, ''))}</small>${height >= 82 ? renderPersonChips(event.item.people) : ''}</button>`;
+  }).join('');
+  const itineraryCalendar = `<div class="tp-itinerary-calendar-scroll"><div class="tp-itinerary-schedule" style="--hour-height:${hourHeight}px;grid-template-columns:58px ${dayColumns}"><div class="tp-schedule-corner"></div>${calendarDates.map(day => `<div class="tp-schedule-day-head"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric', month: 'short' })}</strong></div>`).join('')}<div class="tp-schedule-all-day-label">Stay</div><div class="tp-schedule-all-day" style="grid-template-columns:${dayColumns}">${stayBars || '<span class="tp-schedule-empty">No accommodation</span>'}</div><div class="tp-schedule-time-axis" style="height:${scheduleHeight}px">${hourLabels.map(hour => `<span style="top:${(hour - startHour) * hourHeight}px">${String(hour).padStart(2, '0')}:00</span>`).join('')}</div><div class="tp-schedule-time-grid" style="height:${scheduleHeight}px"><div class="tp-schedule-day-lines" style="grid-template-columns:${dayColumns}">${calendarDates.map(() => '<i></i>').join('')}</div>${timedEvents}</div></div></div>`;
+  const itineraryContent = itineraryLayout === 'calendar' ? itineraryCalendar : `<div class="tp-itinerary-groups">${itineraryList}</div>`;
+  const itineraryFilters = `<div class="tp-itinerary-toolbar"><div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div><div class="tp-itinerary-layout-toggle" aria-label="Itinerary view"><button class="${itineraryLayout === 'list' ? 'active' : ''}" data-itinerary-layout="list" aria-pressed="${itineraryLayout === 'list'}">☷ List</button><button class="${itineraryLayout === 'calendar' ? 'active' : ''}" data-itinerary-layout="calendar" aria-pressed="${itineraryLayout === 'calendar'}">▦ Calendar</button></div></div>`;
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
   const mappedRoutes = itineraryTransport.flatMap(option => {
     const from = mapPoint(option.origin, option.originCoordinates);
@@ -346,9 +496,12 @@ function renderOverview(): string {
     return [{ label: person.name, detail: uniqueLocations.map(point => point.location).join(' → '), locations: uniqueLocations, routes: personRoutes, sensitive: true }];
   }),
   ];
-  return `${sectionHeading('', 'Overview', '')}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-avatar-stack">${people.map(person => avatar(person, false)).join('')}</div></section>
-    <section class="tp-process"><h2>Trip progress</h2><div>${stages.map((stage, index) => `<button class="tp-process-item ${stage.done ? 'is-done' : ''}" data-view="${stage.view}"><span class="tp-process-check">${stage.done ? '✓' : index + 1}</span><span><strong>${escapeHtml(stage.title)}</strong><small>${escapeHtml(stage.detail)}</small></span><b>›</b></button>`).join('')}</div></section>
-    <section class="tp-itinerary"><div class="tp-panel-head"><h2>Itinerary</h2></div>${itineraryFilters}<div class="tp-itinerary-groups">${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
+  const accessWarning = trip!.id !== 'demo' && tripAccess?.mode === 'public-link'
+    ? `<aside class="tp-access-warning"><div><strong>Anyone with this link can view and edit this trip.</strong><span>${!tripAccess.hasOwner ? 'This trip is not linked to an account. The creator must sign in to claim and restrict it.' : account ? (tripAccess.canManage ? 'Choose who can view or edit.' : 'Only the trip owner can restrict access.') : 'The owner must sign in to restrict viewing and editing.'}</span></div><button class="tp-button tp-button-quiet" type="button" data-restrict-access>${tripAccess.hasOwner ? 'Restrict access' : 'Claim & restrict access'}</button></aside>`
+    : '';
+  return `${sectionHeading('', 'Overview', '')}${accessWarning}<section class="tp-hero-card"><button class="tp-edit-button tp-hero-edit" id="tp-edit-trip" type="button">Edit</button><div><h1>${escapeHtml(trip!.title)}</h1><h2>${escapeHtml(trip!.destination)}</h2><p>${datesLabel}</p></div><div class="tp-hero-people">${renderPersonChips(people, 'tp-person-chip-row-on-dark')}</div></section>
+    <section class="tp-process"><h2>Trip progress</h2><div>${progressRows.map(row => `<button class="tp-progress-row" data-view="${row.view}"><strong>${escapeHtml(row.title)}</strong><span class="tp-progress-milestones">${row.milestones.map(milestone => `<span class="tp-progress-milestone ${milestone.done ? 'is-done' : ''}"><i>${milestone.done ? '✓' : ''}</i><small>${escapeHtml(milestone.label)}</small></span>`).join('')}</span><b>›</b></button>`).join('')}</div></section>
+    <section class="tp-card-section"><h2>Itinerary</h2><div class="tp-itinerary">${itineraryFilters}${itineraryContent}</div></section>${renderMapPanel('Journey map', journeyMaps)}`;
 }
 
 function renderPeople(): string {
@@ -375,7 +528,7 @@ function renderPeople(): string {
       : [roomPreferences.includes('happy-to-share') ? 'Happy to share' : '', roomPreferences.includes('prefer-own') ? 'would prefer own' : ''].filter(Boolean).join('; ') || 'Not specified';
     const linkedPartner = people.find(candidate => candidate.id === person.sleepingPreferences.shareDoubleWithParticipantId)
       ?? people.find(candidate => candidate.sleepingPreferences.shareDoubleWithParticipantId === person.id);
-    const bedLabels: Record<string, string> = { 'own-bed': 'own bed', 'sofa-bed': 'sofa bed', 'share-anyone': 'share with anyone', 'share-women': 'share with women', 'share-men': 'share with men' };
+    const bedLabels: Record<string, string> = { 'own-bed': 'own bed', 'share-anyone': 'share with anyone', 'share-women': 'share with women', 'share-men': 'share with men' };
     const selectedPeople = person.sleepingPreferences.shareWithParticipantIds.filter(id => id !== linkedPartner?.id).map(id => people.find(candidate => candidate.id === id)?.name).filter(Boolean);
     const bedPreference = [
       ...person.sleepingPreferences.bedPreferences.map(preference => bedLabels[preference]),
@@ -397,20 +550,22 @@ function statusFor(participantId: string, day: string, slot: AvailabilitySlot): 
 
 function renderAvailability(): string {
   const isAvailable = (participantId: string, day: string) => statusFor(participantId, day, 'all-day') === 'available';
-  const rangeControls = (candidate: Trip['availabilityRanges'][number], allowRemove: boolean) => {
+  const rangeEditControls = (candidate: Trip['availabilityRanges'][number], allowRemove: boolean) =>
+    `<div class="tp-range-controls"><button class="tp-range-icon" data-edit-range="${candidate.id}" aria-label="Edit date option" title="Edit">✎</button>${allowRemove ? `<button class="tp-range-icon tp-range-remove" data-remove-range="${candidate.id}" aria-label="Remove date option" title="Remove">×</button>` : ''}</div>`;
+  const rangeLockControl = (candidate: Trip['availabilityRanges'][number]) => {
     const preferred = trip!.preferredDateRange?.start === candidate.start && trip!.preferredDateRange?.end === candidate.end;
-    return `<div class="tp-range-controls"><button class="tp-preferred-chip ${preferred ? 'is-selected' : ''}" data-prefer-range="${candidate.id}" aria-pressed="${preferred}" ${preferred ? 'disabled' : ''}>Preferred</button><button class="tp-range-icon" data-edit-range="${candidate.id}" aria-label="Edit date option" title="Edit">✎</button>${allowRemove ? `<button class="tp-range-icon tp-range-remove" data-remove-range="${candidate.id}" aria-label="Remove date option" title="Remove">×</button>` : ''}</div>`;
+    return `<button class="tp-preferred-chip ${preferred ? 'is-selected' : ''}" data-prefer-range="${candidate.id}" aria-pressed="${preferred}" ${preferred ? 'disabled' : ''}>${preferred ? 'Dates locked in' : 'Lock in dates'}</button>`;
   };
   if (trip!.availabilityRanges.length > 1) {
     const rangeAvailable = (participantId: string, start: string, end: string) => trip!.availability.some(entry => entry.participantId === participantId && entry.status === 'available' && entry.date >= start && entry.date <= end);
     const options = trip!.availabilityRanges;
-    const poll = `<section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-range-poll" style="--options:${options.length + 1}"><div class="tp-calendar-corner">Traveller</div>${options.map((candidate, index) => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => rangeAvailable(person.id, candidate.start, candidate.end)); return `<div class="tp-range-option ${everyone ? 'all-available' : ''}"><small>Option ${index + 1}</small><div class="tp-option-dates"><time><span>Start</span><strong>${date(candidate.start, { day: 'numeric', month: 'short' })}</strong></time><i>→</i><time><span>End</span><strong>${date(candidate.end, { day: 'numeric', month: 'short' })}</strong></time></div>${everyone ? '<b>Everyone ✓</b>' : ''}${rangeControls(candidate, true)}</div>`; }).join('')}<div class="tp-calendar-add-option"><button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div>${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${options.map(candidate => { const available = rangeAvailable(person.id, candidate.start, candidate.end); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-range-start="${candidate.start}" data-range-end="${candidate.end}" data-person="${person.id}" aria-label="${escapeHtml(person.name)}: ${date(candidate.start)} to ${date(candidate.end)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}<div class="tp-calendar-spacer"></div>`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div><div class="tp-calendar-row-tail" style="grid-column: span ${options.length + 1}"></div></div></div></section>`;
+    const poll = `<section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-range-poll" style="--options:${options.length + 1}"><div class="tp-calendar-corner">Traveller</div>${options.map((candidate, index) => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => rangeAvailable(person.id, candidate.start, candidate.end)); return `<div class="tp-range-option ${everyone ? 'all-available' : ''}"><small>Option ${index + 1}</small><div class="tp-option-dates"><time><span>Start</span><strong>${date(candidate.start, { day: 'numeric', month: 'short' })}</strong></time><i>→</i><time><span>End</span><strong>${date(candidate.end, { day: 'numeric', month: 'short' })}</strong></time></div>${everyone ? '<b>Everyone ✓</b>' : ''}${rangeEditControls(candidate, true)}</div>`; }).join('')}<div class="tp-calendar-add-option"><button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div>${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${options.map(candidate => { const available = rangeAvailable(person.id, candidate.start, candidate.end); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-range-start="${candidate.start}" data-range-end="${candidate.end}" data-person="${person.id}" aria-label="${escapeHtml(person.name)}: ${date(candidate.start)} to ${date(candidate.end)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}<div class="tp-calendar-spacer"></div>`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div>${options.map(candidate => `<div class="tp-range-lock-cell">${rangeLockControl(candidate)}</div>`).join('')}<div class="tp-calendar-spacer"></div></div></div></section>`;
     return `${sectionHeading('', 'Availability', '')}${poll}`;
   }
   const calendars = trip!.availabilityRanges.map((candidate, rangeIndex) => {
     const candidateDays = range(candidate.start, candidate.end);
     const preferred = trip!.preferredDateRange?.start === candidate.start && trip!.preferredDateRange?.end === candidate.end;
-    return `<section class="tp-range-section"><div class="tp-range-head"><div><p class="tp-eyebrow">Option ${rangeIndex + 1}${preferred ? ' · Preferred' : ''}</p><h2>${date(candidate.start, { day: 'numeric', month: 'long' })}–${date(candidate.end, { day: 'numeric', month: 'long', year: 'numeric' })}</h2></div><div>${rangeControls(candidate, trip!.availabilityRanges.length > 1)}<button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div></div><section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-calendar" style="--days:${candidateDays.length}"><div class="tp-calendar-corner">Traveller</div>${candidateDays.map(day => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => isAvailable(person.id, day)); return `<div class="tp-day-head ${everyone ? 'all-available' : ''}"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric' })}</strong>${everyone ? '<b>Everyone ✓</b>' : ''}</div>`; }).join('')}${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${candidateDays.map(day => { const available = isAvailable(person.id, day); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-date="${day}" data-person="${person.id}" data-slot="all-day" aria-label="${escapeHtml(person.name)}: ${date(day)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div><div class="tp-calendar-row-tail" style="grid-column: span ${candidateDays.length}"></div></div></div></section></section>`;
+    return `<section class="tp-range-section"><div class="tp-range-head"><div><p class="tp-eyebrow">Option ${rangeIndex + 1}${preferred ? ' · Locked in' : ''}</p><h2>${date(candidate.start, { day: 'numeric', month: 'long' })}–${date(candidate.end, { day: 'numeric', month: 'long', year: 'numeric' })}</h2></div><div>${rangeEditControls(candidate, trip!.availabilityRanges.length > 1)}<button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div></div><section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-calendar" style="--days:${candidateDays.length}"><div class="tp-calendar-corner">Traveller</div>${candidateDays.map(day => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => isAvailable(person.id, day)); return `<div class="tp-day-head ${everyone ? 'all-available' : ''}"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric' })}</strong>${everyone ? '<b>Everyone ✓</b>' : ''}</div>`; }).join('')}${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${candidateDays.map(day => { const available = isAvailable(person.id, day); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-date="${day}" data-person="${person.id}" data-slot="all-day" aria-label="${escapeHtml(person.name)}: ${date(day)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div><div class="tp-calendar-row-tail" style="grid-column: span ${candidateDays.length}"></div></div></div><div class="tp-range-footer">${rangeLockControl(candidate)}</div></section></section>`;
   }).join('');
   return `${sectionHeading('', 'Availability', '')}${calendars}`;
 }
@@ -421,39 +576,177 @@ function baggageRuleFor(option: TransportOption, item: BaggageItem) {
 }
 
 function renderTransport(): string {
-  const options = [...trip!.transportOptions].sort((a, b) => a.departureAt.localeCompare(b.departureAt));
+  const allOptions = [...trip!.transportOptions].sort((a, b) => a.departureAt.localeCompare(b.departureAt));
+  const options = allOptions.filter(option => isRelevantTo(option, planningPersonId));
   const content = options.length ? `<div class="tp-timeline">${options.map(option => {
     const people = option.participantIds.map(id => trip!.participants.find(person => person.id === id)).filter((person): person is Participant => Boolean(person));
     const baggage = people.flatMap(person => person.baggage.map(item => ({ person, item, rule: baggageRuleFor(option, item) })));
     const baggageTotal = baggage.reduce((total, row) => total + (row.rule?.price ?? 0), 0);
     const ownVote = option.votes[session!.participantId];
     const route = option.origin || option.destination ? `<div class="tp-route"><div><strong>${option.departureAt ? date(option.departureAt, { hour: '2-digit', minute: '2-digit' }) : '—'}</strong><span>${escapeHtml(option.origin || 'From not added')}</span></div><i></i><div><strong>${option.arrivalAt ? date(option.arrivalAt, { hour: '2-digit', minute: '2-digit' }) : '—'}</strong><span>${escapeHtml(option.destination || 'To not added')}</span></div></div>` : '';
-    return `<article class="tp-transport-card"><div class="tp-mode-icon">${iconForMode[option.mode]}</div><div class="tp-transport-main"><div class="tp-card-topline"><span class="tp-status-pill tp-status-${option.status}">${option.status}</span>${option.operator ? `<span>${escapeHtml(option.operator)}</span>` : ''}</div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><h2>${escapeHtml(option.title)}</h2>${route}<div class="tp-avatar-stack">${people.map(person => avatar(person, false)).join('')}</div>${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}</div><div class="tp-cost-box"><small>Per person</small><strong>${option.pricePerPerson ? money(option.pricePerPerson, option.currency) : '—'}</strong><span>${baggageTotal ? `+ ${money(baggageTotal / Math.max(people.length, 1), option.currency)} avg. bags` : option.pricePerPerson ? 'No paid bags matched' : 'Price not added'}</span><button class="tp-edit-button" data-edit-transport="${option.id}">Edit</button></div><div class="tp-option-poll"><div class="tp-vote-buttons"><button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-transport="${option.id}">${option.status === 'selected' ? 'Unselect' : 'Select option'}</button></div>${option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : ''}</article>`;
-  }).join('')}</div>` : emptyState('✈', 'No routes yet', 'Add a flight, train, coach, car or ferry. Assign the people taking it and enter operator baggage prices.', 'Add first transport option', 'id="tp-add-transport"');
-  return `${sectionHeading('', 'Transport', '', options.length ? '<button class="tp-button tp-button-primary" id="tp-add-transport">+ Add transport</button>' : '')}${content}`;
+    return `<article class="tp-transport-card"><div class="tp-mode-icon">${iconForMode[option.mode]}</div><div class="tp-transport-main"><div class="tp-card-topline"><span class="tp-status-pill tp-status-${option.status}">${option.status}</span>${option.operator ? `<span>${escapeHtml(option.operator)}</span>` : ''}</div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><h2>${escapeHtml(option.title)}</h2>${route}${renderPersonChips(people)}${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}</div><div class="tp-cost-box"><small>Per person</small><strong>${option.pricePerPerson ? money(option.pricePerPerson, option.currency) : '—'}</strong><span>${baggageTotal ? `+ ${money(baggageTotal / Math.max(people.length, 1), option.currency)} avg. bags` : option.pricePerPerson ? 'No paid bags matched' : 'Price not added'}</span><button class="tp-edit-button" data-edit-transport="${option.id}">Edit</button></div><div class="tp-option-poll">${renderVoteChart(option)}<div class="tp-vote-buttons"><button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-transport="${option.id}">${option.status === 'selected' ? 'Unselect' : 'Select option'}</button></div>${option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : ''}</article>`;
+  }).join('')}</div>` : allOptions.length ? '<section class="tp-filter-empty"><p>No transport options involve this traveller.</p></section>' : emptyState('✈', 'No routes yet', 'Add a flight, train, coach, car or ferry. Assign the people taking it and enter operator baggage prices.', 'Add first transport option', 'id="tp-add-transport"');
+  const addButton = '<button class="tp-button tp-button-primary" data-add-transport>+ Add transport</button>';
+  return `${sectionHeading('', 'Transport', '', allOptions.length ? addButton : '')}${allOptions.length ? renderPlanningPersonFilter('transport') : ''}${content}${allOptions.length ? `<div class="tp-page-add-action">${addButton}</div>` : ''}`;
 }
 
 function countVotes(option: { votes: Record<string, VoteValue> }, vote: VoteValue): number { return Object.values(option.votes).filter(value => value === vote).length; }
 
+function renderVoteChart(option: { votes: Record<string, VoteValue> }): string {
+  const results = [
+    { key: 'first-choice' as const, label: 'Love it', className: 'is-love' },
+    { key: 'acceptable' as const, label: 'Works', className: 'is-works' },
+    { key: 'unacceptable' as const, label: 'No', className: 'is-no' },
+  ].map(result => ({ ...result, count: countVotes(option, result.key) }));
+  const total = results.reduce((sum, result) => sum + result.count, 0);
+  const summary = results.map(result => `${result.label}: ${result.count}`).join(', ');
+  return `<div class="tp-vote-chart" role="img" aria-label="Votes — ${summary}"><div class="tp-vote-bar">${results.map(result => `<span class="${result.className}" style="--votes:${total ? result.count / total : 0}" title="${result.label}: ${result.count}"></span>`).join('')}</div><div class="tp-vote-legend">${results.map(result => `<span class="${result.className}"><i></i>${result.label}<b>${result.count}</b></span>`).join('')}</div></div>`;
+}
+
+function allowsDoubleShare(person: Participant, other: Participant): boolean {
+  const preferences = person.sleepingPreferences;
+  if (person.goWithFlow || preferences.shareWithParticipantIds.includes(other.id)) return true;
+  if (preferences.bedPreferences.includes('share-anyone')) return true;
+  if (other.sex === 'female' && preferences.bedPreferences.includes('share-women')) return true;
+  if (other.sex === 'male' && preferences.bedPreferences.includes('share-men')) return true;
+  return false;
+}
+
+function needsPrivateRoom(person: Participant): boolean {
+  return person.sleepingPreferences.ownRoom === 'required'
+    || person.sleepingPreferences.roomPreferences.includes('require-own');
+}
+
+function canShareDouble(first: Participant, second: Participant): boolean {
+  return !needsPrivateRoom(first) && !needsPrivateRoom(second)
+    && allowsDoubleShare(first, second) && allowsDoubleShare(second, first);
+}
+
+function assignPeopleToBeds(rooms: Room[], people: Participant[]): Map<string, Participant[]> {
+  const bedAssignments = new Map(rooms.flatMap(room => room.beds).map(bed => [bed.id, [] as Participant[]]));
+  const assignedPeople = new Set<string>();
+  const doubleBeds = rooms.flatMap(room => room.beds).filter(bed => bed.type === 'double' || bed.type === 'king');
+
+  for (const person of people) {
+    if (assignedPeople.has(person.id)) continue;
+    const partner = people.find(candidate => candidate.id === person.sleepingPreferences.shareDoubleWithParticipantId)
+      ?? people.find(candidate => candidate.sleepingPreferences.shareDoubleWithParticipantId === person.id);
+    const bed = partner && !assignedPeople.has(partner.id)
+      ? doubleBeds.find(candidate => !(bedAssignments.get(candidate.id)?.length))
+      : undefined;
+    if (!partner || !bed) continue;
+    bedAssignments.set(bed.id, [person, partner]);
+    assignedPeople.add(person.id);
+    assignedPeople.add(partner.id);
+  }
+
+  for (const bed of doubleBeds.filter(candidate => !(bedAssignments.get(candidate.id)?.length))) {
+    const availablePeople = people.filter(person => !assignedPeople.has(person.id));
+    let pair: [Participant, Participant] | undefined;
+    for (let firstIndex = 0; firstIndex < availablePeople.length && !pair; firstIndex += 1) {
+      const first = availablePeople[firstIndex]!;
+      const second = availablePeople.slice(firstIndex + 1).find(candidate => canShareDouble(first, candidate));
+      if (second) pair = [first, second];
+    }
+    if (!pair) continue;
+    bedAssignments.set(bed.id, pair);
+    assignedPeople.add(pair[0].id);
+    assignedPeople.add(pair[1].id);
+  }
+
+  const remainingPeople = people.filter(person => !assignedPeople.has(person.id)).sort((a, b) => {
+    const priority = (person: Participant) => person.sleepingPreferences.ownRoom === 'required' ? 2 : 0;
+    return priority(b) - priority(a);
+  });
+  for (const person of remainingPeople) {
+    const availableBeds = rooms.flatMap(room => room.beds.map(bed => ({ bed, room })))
+      .filter(({ bed, room }) => {
+        if (bedAssignments.get(bed.id)?.length) return false;
+        const roomOccupants = room.beds.flatMap(candidate => bedAssignments.get(candidate.id) ?? []);
+        if (roomOccupants.some(needsPrivateRoom)) return false;
+        if (needsPrivateRoom(person) && roomOccupants.length) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const suitability = ({ bed, room }: { bed: Room['beds'][number]; room: Room }) =>
+          (bed.type === 'sofa-bed' ? -4 : 0)
+          + (person.sleepingPreferences.ownRoom === 'required' && room.beds.length === 1 ? 3 : 0);
+        return suitability(b) - suitability(a);
+      });
+    const nextBed = availableBeds[0]?.bed;
+    if (!nextBed) continue;
+    bedAssignments.set(nextBed.id, [person]);
+    assignedPeople.add(person.id);
+  }
+
+  return bedAssignments;
+}
+
+function unassignedBedReason(person: Participant, rooms: Room[], assignments: Map<string, Participant[]>): string {
+  const bedRows = rooms.flatMap(room => room.beds.map(bed => ({ bed, room, occupants: assignments.get(bed.id) ?? [] })));
+  const spareDoubles = bedRows.filter(({ bed, occupants }) => (bed.type === 'double' || bed.type === 'king') && occupants.length > 0 && occupants.length < bed.sleeps);
+  if (spareDoubles.length) {
+    const occupantNames = [...new Set(spareDoubles.flatMap(({ occupants }) => occupants.map(occupant => occupant.name)))];
+    if (needsPrivateRoom(person)) return `${person.name} needs a private room; the remaining ${spareDoubles.length === 1 ? 'space is' : 'spaces are'} in an occupied double bed.`;
+    const hasSharingPreference = person.goWithFlow
+      || person.sleepingPreferences.shareWithParticipantIds.length > 0
+      || person.sleepingPreferences.bedPreferences.some(preference => preference.startsWith('share-'));
+    if (!hasSharingPreference) return `${person.name} wants their own bed; the remaining ${spareDoubles.length === 1 ? 'space is' : 'spaces are'} in an occupied double bed.`;
+    return `${person.name} and ${occupantNames.join(' / ')} do not have mutually compatible double-sharing preferences, so the remaining ${spareDoubles.length === 1 ? 'space cannot' : 'spaces cannot'} be used.`;
+  }
+  const unusedSofaBeds = bedRows.filter(({ bed, occupants }) => bed.type === 'sofa-bed' && !occupants.length);
+  if (unusedSofaBeds.length) return `Only a sofa bed remains for ${person.name}; check their room and sharing requirements.`;
+  const declaredSpaces = bedRows.reduce((total, { bed }) => total + bed.sleeps, 0);
+  const assignedSpaces = bedRows.reduce((total, { occupants }) => total + occupants.length, 0);
+  if (declaredSpaces > assignedSpaces) return `${person.name} is unassigned because the remaining advertised sleeping space does not match their preferences.`;
+  return `No sleeping space remains for ${person.name}.`;
+}
+
+function renderRoomPlan(rooms: Room[], people: Participant[]): string {
+  const assignments = assignPeopleToBeds(rooms, people);
+  const assignedIds = new Set([...assignments.values()].flat().map(person => person.id));
+  const unassigned = people.filter(person => !assignedIds.has(person.id));
+  const roomCards = rooms.map(room => `<section class="tp-room-plan"><div class="tp-room-plan-title"><strong>${escapeHtml(room.name)}</strong><small>${room.private ? 'Private room' : 'Shared space'}</small></div><div class="tp-room-beds">${room.beds.length ? room.beds.map(bed => {
+    const occupants = assignments.get(bed.id) ?? [];
+    const bedLabel = bed.type.replace('-', ' ');
+    const bedDescription = bedLabel.endsWith('bed') ? bedLabel : `${bedLabel} bed`;
+    const occupantNames = occupants.length ? occupants.map(person => person.name).join(' and ') : 'Unassigned';
+    const sizeClass = bed.type === 'double' || bed.type === 'king' ? 'is-double' : 'is-single';
+    return `<span class="tp-bed"><span class="tp-bed-icon ${sizeClass}" role="img" aria-label="${escapeHtml(`${bedDescription}: ${occupantNames}`)}" title="${escapeHtml(occupantNames)}"><span class="tp-bed-people">${occupants.map(person => `<i style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span></span><small>${escapeHtml(bedLabel)}</small></span>`;
+  }).join('') : '<span class="tp-no-beds">No beds added</span>'}</div></section>`).join('');
+  const warning = unassigned.length ? `<div class="tp-room-plan-warning"><strong>Bed assignment issue</strong>${unassigned.map(person => `<p>${escapeHtml(unassignedBedReason(person, rooms, assignments))}</p>`).join('')}</div>` : '';
+  return `<div class="tp-room-plan-list"><p class="tp-room-plan-intro">Suggested room plan based on sleeping preferences</p>${roomCards}${warning}</div>`;
+}
+
 function renderStays(): string {
   if (!trip!.accommodationOptions.length) return `${sectionHeading('', 'Stays', '')}${emptyState('🏠', 'No accommodation yet', 'Add a hotel, house, hostel, campsite or any other option.', 'Add first accommodation', 'id="tp-add-stay"')}`;
-  return `${sectionHeading('', 'Stays', '', '<button class="tp-button tp-button-primary" id="tp-add-stay">+ Add accommodation</button>')}<div class="tp-stay-grid">${trip!.accommodationOptions.map(option => {
+  const options = trip!.accommodationOptions.filter(option => isRelevantTo(option, planningPersonId));
+  const content = options.length ? `<div class="tp-stay-grid">${options.map(option => {
     const ownVote = option.votes[session!.participantId];
-    const totalBeds = option.rooms.flatMap(room => room.beds).reduce((total, bed) => total + bed.sleeps, 0);
-    return `<article class="tp-stay-card ${option.status === 'selected' ? 'is-selected' : ''}"><div class="tp-stay-image tp-stay-image-${option.fitLevel}"><span>${option.status === 'selected' ? 'Selected stay' : escapeHtml(option.platform || 'Accommodation')}</span><strong>${option.rooms.length}<small> room${option.rooms.length === 1 ? '' : 's'}</small></strong></div><div class="tp-stay-body"><div class="tp-panel-head"><div><h2>${escapeHtml(option.name)}</h2><p>${escapeHtml(option.location || 'Location not added')}</p></div><span class="tp-fit tp-fit-${option.fitLevel}">${option.fitLevel}</span></div><div class="tp-stay-facts"><span><strong>${option.rooms.length || '—'}</strong> rooms</span><span><strong>${totalBeds || '—'}</strong> spaces</span><span><strong>${option.priceTotal ? money(option.priceTotal / Math.max(trip!.participants.length, 1), option.currency) : '—'}</strong> per person</span></div><p class="tp-fit-copy">${escapeHtml(option.fitSummary)}</p>${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}${option.siteDistances.length ? `<div class="tp-site-distances">${option.siteDistances.map(item => `<span>${escapeHtml(item.site)} <b>${item.minutes} min</b></span>`).join('')}</div>` : ''}${option.rooms.length ? `<details><summary>Room and bed details</summary><div class="tp-room-list">${option.rooms.map(room => `<div><strong>${escapeHtml(room.name)}</strong><span>${room.beds.map(bed => `${bed.type.replace('-', ' ')} (${bed.sleeps})`).join(', ') || 'Beds not added'}</span></div>`).join('')}</div></details>` : ''}<div class="tp-vote-summary"><span><b>♥</b> ${countVotes(option, 'first-choice')} first choice</span><span>${countVotes(option, 'acceptable')} okay</span><span>${countVotes(option, 'unacceptable')} no</span></div><div class="tp-vote-buttons" role="group" aria-label="Your vote for ${escapeHtml(option.name)}"><button data-accommodation="${option.id}" data-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-accommodation="${option.id}" data-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-accommodation="${option.id}" data-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div><div class="tp-stay-actions">${option.sourceUrl ? `<a href="${option.sourceUrl}" target="_blank" rel="noopener">Listing ↗</a>` : '<span></span>'}<button class="tp-edit-button" data-edit-stay="${option.id}">Edit</button><button class="tp-button tp-button-primary" data-select-stay="${option.id}" ${option.status === 'selected' ? 'disabled' : ''}>${option.status === 'selected' ? 'Selected' : 'Choose'}</button></div></div></article>`;
-  }).join('')}</div>`;
+    const relevantPeople = option.participantIds?.length ? trip!.participants.filter(person => option.participantIds!.includes(person.id)) : trip!.participants;
+    const pricePerPerson = option.priceTotal ? money(option.priceTotal / Math.max(relevantPeople.length, 1), option.currency) : '—';
+    const roomPlan = option.rooms.length ? renderRoomPlan(option.rooms, relevantPeople) : '';
+    const listingButton = option.sourceUrl ? `<a class="tp-listing-icon" href="${option.sourceUrl}" target="_blank" rel="noopener" aria-label="Open listing for ${escapeHtml(option.name)}" title="Open listing">↗</a>` : '';
+    const chooseButton = option.status === 'selected' ? '' : `<button class="tp-button tp-button-primary tp-stay-choose" data-select-stay="${option.id}">Choose</button>`;
+    return `<article class="tp-stay-card ${option.status === 'selected' ? 'is-selected' : ''}"><div class="tp-stay-image tp-stay-image-${option.fitLevel}"><button class="tp-stay-header-edit" type="button" data-edit-stay="${option.id}">Edit</button><span>${option.status === 'selected' ? 'Selected stay' : escapeHtml(option.platform || 'Accommodation')}</span><strong class="tp-stay-price">${pricePerPerson}<small>per person</small></strong></div><div class="tp-stay-body"><div class="tp-panel-head"><div class="tp-stay-heading"><div class="tp-stay-title-row"><h2>${escapeHtml(option.name)}</h2>${listingButton}</div><p>${escapeHtml(option.location || 'Location not added')}</p></div><span class="tp-fit tp-fit-${option.fitLevel}">${option.fitLevel}</span></div>${roomPlan}${renderPersonChips(relevantPeople)}<p class="tp-fit-copy">${escapeHtml(option.fitSummary)}</p>${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}${option.siteDistances.length ? `<div class="tp-site-distances">${option.siteDistances.map(item => `<span>${escapeHtml(item.site)} <b>${item.minutes} min</b></span>`).join('')}</div>` : ''}${renderVoteChart(option)}<div class="tp-vote-buttons" role="group" aria-label="Your vote for ${escapeHtml(option.name)}"><button data-accommodation="${option.id}" data-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-accommodation="${option.id}" data-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-accommodation="${option.id}" data-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div>${chooseButton}</div></article>`;
+  }).join('')}</div>` : '<section class="tp-filter-empty"><p>No accommodation options involve this traveller.</p></section>';
+  return `${sectionHeading('', 'Stays', '', '<button class="tp-button tp-button-primary" id="tp-add-stay">+ Add accommodation</button>')}${renderPlanningPersonFilter('accommodation')}${content}`;
 }
 
 function renderActivities(): string {
   if (!trip!.activities.length) return `${sectionHeading('', 'Activities', '')}${emptyState('✦', 'No activity ideas yet', 'Suggest anything the group could do, then vote together.', 'Add first activity', 'id="tp-add-activity"')}`;
-  return `${sectionHeading('', 'Activities', '', '<button class="tp-button tp-button-primary" id="tp-add-activity">+ Add activity</button>')}<div class="tp-activity-grid">${trip!.activities.map(option => {
+  const options = trip!.activities.filter(option => isRelevantTo(option, planningPersonId));
+  const content = options.length ? `<div class="tp-activity-grid">${options.map(option => {
     const ownVote = option.votes[session!.participantId];
-    return `<article class="tp-activity-card ${option.status === 'selected' ? 'is-selected' : ''}"><div class="tp-panel-head"><div><span class="tp-activity-category">${escapeHtml(option.category || 'Activity')}</span><h2>${escapeHtml(option.name)}</h2><p>${escapeHtml(option.location || 'Location not added')}</p></div><button class="tp-edit-button" data-edit-activity="${option.id}">Edit</button></div><div class="tp-activity-meta">${option.date ? `<span>📅 ${date(option.date, { weekday: 'short', day: 'numeric', month: 'short' })}${option.time ? ` · ${escapeHtml(option.time)}` : ''}</span>` : ''}${option.costPerPerson ? `<span>${money(option.costPerPerson, option.currency)} per person</span>` : ''}</div>${option.notes ? `<p>${escapeHtml(option.notes)}</p>` : ''}${option.sourceUrl ? `<a href="${option.sourceUrl}" target="_blank" rel="noopener">Open link ↗</a>` : ''}<div class="tp-vote-summary"><span><b>♥</b> ${countVotes(option, 'first-choice')}</span><span>${countVotes(option, 'acceptable')} okay</span><span>${countVotes(option, 'unacceptable')} no</span></div><div class="tp-vote-buttons"><button data-activity="${option.id}" data-activity-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-activity="${option.id}" data-activity-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-activity="${option.id}" data-activity-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-activity="${option.id}">${option.status === 'selected' ? 'Remove from itinerary' : 'Add to itinerary'}</button></article>`;
-  }).join('')}</div>`;
+    const relevantPeople = option.participantIds?.length ? trip!.participants.filter(person => option.participantIds!.includes(person.id)) : trip!.participants;
+    return `<article class="tp-activity-card ${option.status === 'selected' ? 'is-selected' : ''}"><div class="tp-panel-head"><div><span class="tp-activity-category">${escapeHtml(option.category || 'Activity')}</span><h2>${escapeHtml(option.name)}</h2><p>${escapeHtml(option.location || 'Location not added')}</p></div><button class="tp-edit-button" data-edit-activity="${option.id}">Edit</button></div><div class="tp-activity-meta">${option.date ? `<span>📅 ${date(option.date, { weekday: 'short', day: 'numeric', month: 'short' })}${option.time ? ` · ${escapeHtml(option.time)}` : ''}</span>` : ''}${option.costPerPerson ? `<span>${money(option.costPerPerson, option.currency)} per person</span>` : ''}</div>${renderPersonChips(relevantPeople)}${option.notes ? `<p>${escapeHtml(option.notes)}</p>` : ''}${option.sourceUrl ? `<a href="${option.sourceUrl}" target="_blank" rel="noopener">Open link ↗</a>` : ''}${renderVoteChart(option)}<div class="tp-vote-buttons"><button data-activity="${option.id}" data-activity-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-activity="${option.id}" data-activity-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-activity="${option.id}" data-activity-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-activity="${option.id}">${option.status === 'selected' ? 'Remove from itinerary' : 'Add to itinerary'}</button></article>`;
+  }).join('')}</div>` : '<section class="tp-filter-empty"><p>No activities involve this traveller.</p></section>';
+  return `${sectionHeading('', 'Activities', '', '<button class="tp-button tp-button-primary" id="tp-add-activity">+ Add activity</button>')}${renderPlanningPersonFilter('activities')}${content}`;
 }
 
 function render(): void {
   if (!trip || !session) return;
+  $('#tp-app').classList.toggle('tp-read-only', !canEdit);
   $('#tp-title').textContent = trip.title;
   $('#tp-subtitle').textContent = `${date(trip.availabilityWindow.start)}–${date(trip.availabilityWindow.end, { day: 'numeric', month: 'short', year: 'numeric' })}`;
   const views: Record<View, () => string> = { overview: renderOverview, people: renderPeople, availability: renderAvailability, transport: renderTransport, stays: renderStays, activities: renderActivities };
@@ -467,16 +760,70 @@ function render(): void {
 function setView(view: View): void { activeView = view; render(); $('#tp-content').focus({ preventScroll: true }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function closeDialogs(): void { document.querySelectorAll<HTMLDialogElement>('.tp-dialog[open]').forEach(dialog => dialog.close()); }
 
-function openTripDialog(): void {
+function addPermissionRow(permission?: TripPermission): void {
+  $('#tp-permission-list').insertAdjacentHTML('beforeend', `<div class="tp-permission-row"><input type="email" name="permissionEmail" placeholder="friend@example.com" value="${escapeHtml(permission?.email ?? '')}" /><select name="permissionRole"><option value="viewer" ${permission?.role === 'viewer' ? 'selected' : ''}>Viewer</option><option value="editor" ${permission?.role === 'editor' ? 'selected' : ''}>Editor</option></select><button class="tp-icon-button" type="button" data-remove-permission aria-label="Remove permission">×</button></div>`);
+}
+
+function renderTripAccessSettings(): void {
+  const section = $('#tp-trip-access-settings');
+  section.hidden = trip?.id === 'demo';
+  if (section.hidden) return;
+  const access = tripAccess ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false } satisfies TripAccessState;
+  const canClaim = Boolean(account && session?.participantId && session.participantId === trip?.participants[0]?.id && !access.hasOwner);
+  const canManage = access.canManage || canClaim;
+  const summary = $('#tp-trip-access-summary');
+  if (!access.hasOwner) {
+    summary.innerHTML = !account
+      ? `This trip is not linked to an account. The original creator must <a href="${signInUrl(`${location.pathname}?trip=${trip!.id}`)}">sign in or create an account</a> to claim it before access can be restricted.`
+      : canClaim
+        ? `This trip is not linked yet. Saving these settings will claim it for <strong>${escapeHtml(account.user.email)}</strong> and add it to My trips.`
+        : 'This trip is not linked to an account. Only the original creator, using the browser that created it, can claim and restrict it.';
+  } else {
+    summary.innerHTML = access.mode === 'public-link'
+      ? account
+        ? access.canManage ? 'Anyone with the link can currently view and edit. You can restrict it below.' : 'Anyone with the link can view and edit. Only the owner can change visibility.'
+        : `Anyone with the link can view and edit. <a href="${signInUrl(`${location.pathname}?trip=${trip!.id}`)}">Sign in</a> as the owner to change access.`
+      : `This trip is restricted to the owner and ${access.permissions.length} invited account${access.permissions.length === 1 ? '' : 's'}.`;
+  }
+  const manager = $('#tp-trip-access-manager');
+  manager.hidden = !canManage;
+  if (!canManage) return;
+  const form = $<HTMLFormElement>('#tp-trip-form');
+  (form.elements.namedItem('accessMode') as RadioNodeList).value = access.mode;
+  $('#tp-permission-list').innerHTML = '';
+  access.permissions.forEach(addPermissionRow);
+}
+
+async function saveAccessSettings(): Promise<void> {
+  if (!trip) return;
+  const form = $<HTMLFormElement>('#tp-trip-form');
+  const mode = (form.elements.namedItem('accessMode') as RadioNodeList).value as 'public-link' | 'restricted';
+  const rows = [...form.querySelectorAll<HTMLElement>('.tp-permission-row')];
+  const permissions = rows.map(row => ({
+    email: row.querySelector<HTMLInputElement>('[name="permissionEmail"]')!.value,
+    role: row.querySelector<HTMLSelectElement>('[name="permissionRole"]')!.value as 'viewer' | 'editor',
+  })).filter(permission => permission.email.trim());
+  const error = $('#tp-access-settings-error');
+  error.hidden = true;
+  try {
+    tripAccess = await repository.saveTripAccess(trip.id, mode, permissions);
+    canEdit = tripAccess.canEdit;
+    renderTripAccessSettings(); render();
+    showToast('Trip access updated.');
+  } catch (caught) {
+    error.textContent = caught instanceof Error ? caught.message : 'Could not update trip access.';
+    error.hidden = false;
+  }
+}
+
+function openTripDialog(showAccess = false): void {
   const form = $('#tp-trip-form') as HTMLFormElement;
   (form.elements.namedItem('title') as HTMLInputElement).value = trip!.title;
   setLocationField(form, 'destination', trip!.destination, trip!.destinationCoordinates);
-  (form.elements.namedItem('windowStart') as HTMLInputElement).value = trip!.availabilityWindow.start;
-  (form.elements.namedItem('windowEnd') as HTMLInputElement).value = trip!.availabilityWindow.end;
-  (form.elements.namedItem('tripStart') as HTMLInputElement).value = trip!.dateRange.start;
-  (form.elements.namedItem('tripEnd') as HTMLInputElement).value = trip!.dateRange.end;
+  renderTripAccessSettings();
   syncDateButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
   $<HTMLDialogElement>('#tp-trip-dialog').showModal();
+  if (showAccess) window.setTimeout(() => $('#tp-trip-access-settings').scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
 }
 
 function addBagRow(item?: BaggageItem): void {
@@ -495,7 +842,7 @@ async function requestLocationSuggestions(input: HTMLInputElement, query: string
   if (!suggestions || !help) return;
   help.textContent = 'Searching…';
   try {
-    const response = await fetch(`/api/geocode?type=autocomplete&text=${encodeURIComponent(query)}`, { signal: controller.signal });
+    const response = await fetch(`${appBase}/api/geocode?type=autocomplete&text=${encodeURIComponent(query)}`, { signal: controller.signal });
     if (!response.ok) throw new Error('Location search failed.');
     const result = await response.json() as { features?: { properties?: { formatted?: string; address_line1?: string; address_line2?: string }; geometry?: { coordinates?: [number, number] } }[] };
     const options = (result.features ?? []).flatMap(feature => {
@@ -561,7 +908,7 @@ function openTransportDialog(id?: string): void {
   const option = trip!.transportOptions.find(candidate => candidate.id === id);
   setLocationField(form, 'origin');
   setLocationField(form, 'destination');
-  $('#tp-person-checks').innerHTML = trip!.participants.map(person => `<label><input type="checkbox" name="participants" value="${person.id}" ${!option || option.participantIds.includes(person.id) ? 'checked' : ''} />${avatar(person)}</label>`).join('');
+  renderParticipantChecks($('#tp-person-checks'), option?.participantIds);
   if (option) {
     hidden.value = option.id;
     for (const [name, value] of Object.entries({ title: option.title, mode: option.mode, operator: option.operator, price: option.pricePerPerson || '', origin: option.origin, destination: option.destination, departureDate: option.departureAt.slice(0, 10), departureTime: option.departureAt.slice(11, 16), arrivalDate: option.arrivalAt.slice(0, 10), arrivalTime: option.arrivalAt.slice(11, 16), checkedPrice: option.baggageRules.find(rule => /checked/i.test(rule.label))?.price ?? '', sportsPrice: option.baggageRules.find(rule => /sport/i.test(rule.label))?.price ?? '', checkedMax: option.baggageRules.find(rule => /checked/i.test(rule.label))?.maxWeightKg ?? '', sportsMax: option.baggageRules.find(rule => /sport/i.test(rule.label))?.maxWeightKg ?? '', baggageUrl: option.baggageRules[0]?.sourceUrl ?? '', bookingReference: option.bookingReference ?? '' })) (form.elements.namedItem(name) as HTMLInputElement).value = String(value);
@@ -594,6 +941,7 @@ function openStayDialog(id?: string): void {
   $('#tp-room-editor').innerHTML = '';
   $('#tp-travel-time-editor').innerHTML = '';
   const option = trip!.accommodationOptions.find(candidate => candidate.id === id);
+  renderParticipantChecks($('#tp-stay-person-checks'), option?.participantIds);
   setLocationField(form, 'location');
   form.querySelector('h2')!.textContent = option ? 'Edit accommodation' : 'Add accommodation';
   if (option) {
@@ -616,6 +964,7 @@ function openActivityDialog(id?: string): void {
   form.reset();
   (form.elements.namedItem('id') as HTMLInputElement).value = '';
   const option = trip!.activities.find(candidate => candidate.id === id);
+  renderParticipantChecks($('#tp-activity-person-checks'), option?.participantIds);
   setLocationField(form, 'location');
   form.querySelector('h2')!.textContent = option ? 'Edit activity' : 'Add activity';
   if (option) {
@@ -647,7 +996,7 @@ async function savePerson(form: HTMLFormElement): Promise<void> {
   const shareWithParticipantIds = data.getAll('sharePerson').map(String);
   if (partnerId && !shareWithParticipantIds.includes(partnerId)) shareWithParticipantIds.push(partnerId);
   const originCoordinates = coordinatesFromForm(data, 'origin');
-  const person: Participant = { id, name: String(data.get('name')).trim(), initials: String(data.get('name')).trim().slice(0, 1).toUpperCase(), colour: existing?.colour ?? colours[trip!.participants.length % colours.length], origin: String(data.get('origin')).trim(), originCoordinates, sex: String(data.get('sex')) as Participant['sex'], confirmed: existing?.confirmed ?? false, goWithFlow: false, sleepingPreferences: { ownRoom, ownBed: bedPreferences.includes('own-bed'), shareDoubleWithParticipantId: partnerId, acceptsSofaBed: bedPreferences.includes('sofa-bed'), roomPreferences, bedPreferences, shareWithParticipantIds }, baggage: bags };
+  const person: Participant = { id, name: String(data.get('name')).trim(), initials: String(data.get('name')).trim().slice(0, 1).toUpperCase(), colour: existing?.colour ?? colours[trip!.participants.length % colours.length], origin: String(data.get('origin')).trim(), originCoordinates, sex: String(data.get('sex')) as Participant['sex'], confirmed: existing?.confirmed ?? false, goWithFlow: false, sleepingPreferences: { ownRoom, ownBed: bedPreferences.includes('own-bed'), shareDoubleWithParticipantId: partnerId, acceptsSofaBed: false, roomPreferences, bedPreferences, shareWithParticipantIds }, baggage: bags };
   closeDialogs();
   await mutate(() => repository.saveParticipant(trip!.id, person), existing ? 'Person updated.' : 'Person added.');
 }
@@ -666,13 +1015,15 @@ async function saveTransport(form: HTMLFormElement): Promise<void> {
 async function saveStay(form: HTMLFormElement): Promise<void> {
   if (!validateForm(form)) return;
   const data = new FormData(form); const id = String(data.get('id') || `stay-${crypto.randomUUID()}`); const existing = trip!.accommodationOptions.find(option => option.id === id);
+  const participantIds = data.getAll('participants').map(String);
   const rooms: Room[] = [...form.querySelectorAll<HTMLElement>('[data-room-id]')].map((roomElement, roomIndex) => ({
     id: roomElement.dataset.roomId!,
     name: roomElement.querySelector<HTMLInputElement>('[name="roomName"]')!.value.trim() || `Room ${roomIndex + 1}`,
     private: roomElement.querySelector<HTMLInputElement>('[name="roomPrivate"]')!.checked,
     beds: [...roomElement.querySelectorAll<HTMLElement>('[data-bed-id]')].map(bedElement => ({ id: bedElement.dataset.bedId!, type: bedElement.querySelector<HTMLSelectElement>('[name="bedType"]')!.value as BedType, sleeps: Number(bedElement.querySelector<HTMLInputElement>('[name="bedSleeps"]')!.value) || 1 })),
   }));
-  const spaces = rooms.flatMap(room => room.beds).reduce((total, bed) => total + bed.sleeps, 0); const hasSofa = rooms.some(room => room.beds.some(bed => bed.type === 'sofa-bed')); const fitLevel = !rooms.length ? 'compromise' : spaces < trip!.participants.length ? 'invalid' : hasSofa ? 'compromise' : 'good';
+  const travellerCount = participantIds.length || trip!.participants.length;
+  const spaces = rooms.flatMap(room => room.beds).reduce((total, bed) => total + bed.sleeps, 0); const hasSofa = rooms.some(room => room.beds.some(bed => bed.type === 'sofa-bed')); const fitLevel = !rooms.length ? 'compromise' : spaces < travellerCount ? 'invalid' : hasSofa ? 'compromise' : 'good';
   const siteDistances = [...form.querySelectorAll<HTMLElement>('.tp-travel-time-row')].map(row => {
     const site = row.querySelector<HTMLInputElement>('[name="travelPlace"]')!.value.trim();
     const latitudeValue = row.querySelector<HTMLInputElement>('[data-location-lat]')?.value ?? '';
@@ -684,8 +1035,8 @@ async function saveStay(form: HTMLFormElement): Promise<void> {
   const sourceUrl = String(data.get('url') || '');
   let platform = '';
   try { platform = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : ''; } catch { platform = ''; }
-  const fitSummary = !rooms.length ? 'Room and bed details have not been added yet.' : spaces < trip!.participants.length ? `${spaces} sleeping spaces for ${trip!.participants.length} people — this does not fit the whole group.` : hasSofa ? 'Fits the group, but uses a sofa bed. Check this against everyone’s preferences.' : `Fits all ${trip!.participants.length} travellers without using a sofa bed.`;
-  const option: AccommodationOption = { id, status: existing?.status ?? 'shortlisted', name: String(data.get('name')), platform, sourceUrl, location: String(data.get('location') || ''), locationCoordinates: coordinatesFromForm(data, 'location'), priceTotal: Number(data.get('price')) || 0, currency: trip!.currency, checkIn: String(data.get('checkIn') || ''), checkOut: String(data.get('checkOut') || ''), walkToPrimarySiteMinutes: siteDistances.find(item => /main activity/i.test(item.site))?.minutes ?? 0, siteDistances, rooms, votes: existing?.votes ?? {}, fitSummary, fitLevel, notes: String(data.get('notes')), bookingReference: String(data.get('bookingReference')) || undefined };
+  const fitSummary = !rooms.length ? 'Room and bed details have not been added yet.' : spaces < travellerCount ? `${spaces} sleeping spaces for ${travellerCount} people — this does not fit the relevant group.` : hasSofa ? 'Fits the relevant group, but uses a sofa bed. Check this against everyone’s preferences.' : `Fits all ${travellerCount} relevant travellers without using a sofa bed.`;
+  const option: AccommodationOption = { id, status: existing?.status ?? 'shortlisted', participantIds, name: String(data.get('name')), platform, sourceUrl, location: String(data.get('location') || ''), locationCoordinates: coordinatesFromForm(data, 'location'), priceTotal: Number(data.get('price')) || 0, currency: trip!.currency, checkIn: String(data.get('checkIn') || ''), checkOut: String(data.get('checkOut') || ''), walkToPrimarySiteMinutes: siteDistances.find(item => /main activity/i.test(item.site))?.minutes ?? 0, siteDistances, rooms, votes: existing?.votes ?? {}, fitSummary, fitLevel, notes: String(data.get('notes')), bookingReference: String(data.get('bookingReference')) || undefined };
   closeDialogs(); await mutate(() => repository.saveAccommodationOption(trip!.id, option), 'Accommodation saved.');
 }
 
@@ -694,23 +1045,33 @@ async function saveActivity(form: HTMLFormElement): Promise<void> {
   const data = new FormData(form);
   const id = String(data.get('id') || `activity-${crypto.randomUUID()}`);
   const existing = trip!.activities.find(option => option.id === id);
-  const option: ActivityOption = { id, status: existing?.status ?? 'idea', name: String(data.get('name')).trim(), category: String(data.get('category') || '') || undefined, location: String(data.get('location') || '') || undefined, locationCoordinates: coordinatesFromForm(data, 'location'), date: String(data.get('date') || '') || undefined, time: String(data.get('time') || '') || undefined, sourceUrl: String(data.get('url') || '') || undefined, costPerPerson: Number(data.get('cost')) || undefined, currency: trip!.currency, notes: String(data.get('notes') || '') || undefined, votes: existing?.votes ?? {} };
+  const option: ActivityOption = { id, status: existing?.status ?? 'idea', participantIds: data.getAll('participants').map(String), name: String(data.get('name')).trim(), category: String(data.get('category') || '') || undefined, location: String(data.get('location') || '') || undefined, locationCoordinates: coordinatesFromForm(data, 'location'), date: String(data.get('date') || '') || undefined, time: String(data.get('time') || '') || undefined, sourceUrl: String(data.get('url') || '') || undefined, costPerPerson: Number(data.get('cost')) || undefined, currency: trip!.currency, notes: String(data.get('notes') || '') || undefined, votes: existing?.votes ?? {} };
   closeDialogs(); await mutate(() => repository.saveActivityOption(trip!.id, option), 'Activity saved.');
 }
 
-function showTrip(result: { trip: Trip; session: TripSession }): void {
+function showTrip(result: TripResult & { session: TripSession }): void {
   trip = result.trip;
   session = result.session;
+  tripAccess = result.access ?? repository.getTripAccess(result.trip.id) ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false };
+  canEdit = tripAccess.canEdit;
   itineraryPersonId = '';
   history.replaceState({}, '', `${location.pathname}?trip=${trip.id}`);
   $<HTMLDialogElement>('#tp-join-dialog').close();
   $('#tp-access').hidden = true;
   $('#tp-app').hidden = false;
+  $('#tp-read-only-pill').hidden = canEdit;
+  $<HTMLAnchorElement>('#tp-sign-in-edit').href = signInUrl(`${location.pathname}?trip=${trip.id}`);
+  $('#tp-sign-in-edit').hidden = canEdit || Boolean(account);
+  $('#tp-import').hidden = !canEdit;
   render();
 }
 
 function requestTripIdentity(loadedTrip: Trip): void {
   trip = loadedTrip;
+  if (!canEdit) {
+    showTrip({ trip: loadedTrip, session: { tripId: loadedTrip.id, participantId: '', displayName: 'Guest' } });
+    return;
+  }
   $('#tp-access-title').textContent = loadedTrip.title;
   const dialog = $<HTMLDialogElement>('#tp-join-dialog');
   if (!dialog.open) dialog.showModal();
@@ -734,8 +1095,15 @@ async function importTripFile(file: File): Promise<void> {
   showToast('Trip imported.');
 }
 
-export function mountTripPlanner(): void {
+export async function mountTripPlanner(): Promise<void> {
   const setup = $('#tp-access-form') as HTMLFormElement;
+  const legacyDemoId = 'trip_demo0000000000000000000000000000';
+  const requestedTrip = new URLSearchParams(location.search).get('trip') ?? undefined;
+  const savedToken = requestedTrip === legacyDemoId ? 'demo' : requestedTrip;
+  if (requestedTrip === legacyDemoId) history.replaceState({}, '', `${location.pathname}?trip=demo`);
+  account = await loadAccount(savedToken);
+  canEdit = true;
+  renderAccountPanel();
   enhanceForms();
   renderSetupCalendar();
   setup.addEventListener('submit', async event => {
@@ -748,17 +1116,6 @@ export function mountTripPlanner(): void {
       showTrip(result);
     } catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not create the trip.'; error.hidden = false; }
     finally { button.disabled = false; button.textContent = 'Create blank trip'; }
-  });
-
-  $('#tp-load-demo').addEventListener('click', async event => {
-    const button = event.currentTarget as HTMLButtonElement;
-    const error = $('#tp-access-error');
-    button.disabled = true; button.textContent = 'Loading…'; error.hidden = true;
-    try {
-      const result = await repository.createDemoTrip();
-      showTrip(result);
-    } catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not load the demo trip.'; error.hidden = false; }
-    finally { button.disabled = false; button.textContent = 'Load detailed demo trip'; }
   });
 
   $<HTMLFormElement>('#tp-join-form').addEventListener('submit', async event => {
@@ -778,6 +1135,13 @@ export function mountTripPlanner(): void {
   });
 
   $('#tp-export').addEventListener('click', exportCurrentTrip);
+  $('#tp-my-trips').addEventListener('click', async () => {
+    trip = undefined; session = undefined;
+    history.replaceState({}, '', location.pathname);
+    $('#tp-app').hidden = true; $('#tp-access').hidden = false;
+    account = await loadAccount(); canEdit = true; renderAccountPanel();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
   $('#tp-import').addEventListener('click', () => $<HTMLInputElement>('#tp-import-file').click());
   $<HTMLInputElement>('#tp-import-file').addEventListener('change', async event => {
     const input = event.currentTarget as HTMLInputElement;
@@ -811,6 +1175,10 @@ export function mountTripPlanner(): void {
 
   $('#trip-planner-root').addEventListener('click', event => {
     const target = event.target as HTMLElement;
+    if (target.closest('#tp-add-permission')) { addPermissionRow(); return; }
+    if (target.closest('#tp-save-access')) { void saveAccessSettings(); return; }
+    const removePermission = target.closest<HTMLButtonElement>('[data-remove-permission]');
+    if (removePermission) { removePermission.closest('.tp-permission-row')?.remove(); return; }
     const locationSuggestion = target.closest<HTMLButtonElement>('[data-location-suggestion]');
     if (locationSuggestion) {
       const result = JSON.parse(decodeURIComponent(locationSuggestion.dataset.locationSuggestion!)) as { location: string; latitude: number; longitude: number };
@@ -827,6 +1195,8 @@ export function mountTripPlanner(): void {
     if (target.closest('#tp-picker-clear') && activeDateInput) { activeDateInput.value = ''; syncDateButtons(); $<HTMLDialogElement>('#tp-date-picker-dialog').close(); return; }
     if (target.closest('#tp-picker-cancel')) { $<HTMLDialogElement>('#tp-date-picker-dialog').close(); return; }
     const itineraryPerson = target.closest<HTMLButtonElement>('[data-itinerary-person]'); if (itineraryPerson) { itineraryPersonId = itineraryPerson.dataset.itineraryPerson ?? ''; render(); return; }
+    const itineraryLayoutButton = target.closest<HTMLButtonElement>('[data-itinerary-layout]'); if (itineraryLayoutButton) { itineraryLayout = itineraryLayoutButton.dataset.itineraryLayout === 'calendar' ? 'calendar' : 'list'; localStorage.setItem('trip-planner:itinerary-layout', itineraryLayout); render(); return; }
+    const planningPerson = target.closest<HTMLButtonElement>('[data-planning-person]'); if (planningPerson) { planningPersonId = planningPerson.dataset.planningPerson ?? ''; render(); return; }
     const setupDate = target.closest<HTMLButtonElement>('[data-setup-date]'); if (setupDate?.dataset.setupDate) { selectSetupDate(setupDate.dataset.setupDate); return; }
     const removeSetupRange = target.closest<HTMLButtonElement>('[data-remove-setup-range]'); if (removeSetupRange) { setupRanges = setupRanges.filter(candidate => candidate.id !== removeSetupRange.dataset.removeSetupRange); renderSetupCalendar(); return; }
     if (target.closest('#tp-setup-prev-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() - 1, 1); renderSetupCalendar(); return; }
@@ -840,6 +1210,7 @@ export function mountTripPlanner(): void {
     const selectTransport = target.closest<HTMLButtonElement>('[data-select-transport]'); if (selectTransport) { void mutate(() => repository.selectTransport(trip!.id, selectTransport.dataset.selectTransport!), 'Transport selection updated.'); return; }
     const activityVote = target.closest<HTMLButtonElement>('[data-activity-vote]'); if (activityVote) { void mutate(() => repository.voteForActivity(trip!.id, activityVote.dataset.activity!, session!.participantId, activityVote.dataset.activityVote as VoteValue), 'Vote saved.'); return; }
     const selectActivity = target.closest<HTMLButtonElement>('[data-select-activity]'); if (selectActivity) { void mutate(() => repository.selectActivity(trip!.id, selectActivity.dataset.selectActivity!), 'Itinerary updated.'); return; }
+    if (target.closest('[data-restrict-access]')) return openTripDialog(true);
     if (target.closest('#tp-edit-trip')) return openTripDialog();
     if (target.closest('#tp-add-person')) return openPersonDialog();
     if (target.closest('#tp-add-bag')) { addBagRow(); return; }
@@ -854,8 +1225,8 @@ export function mountTripPlanner(): void {
     if (target.closest('#tp-add-range')) return openRangeDialog();
     const editRange = target.closest<HTMLElement>('[data-edit-range]'); if (editRange) return openRangeDialog(editRange.dataset.editRange);
     const removeRange = target.closest<HTMLElement>('[data-remove-range]'); if (removeRange) { void mutate(() => repository.removeAvailabilityRange(trip!.id, removeRange.dataset.removeRange!), 'Date range removed.'); return; }
-    const preferRange = target.closest<HTMLElement>('[data-prefer-range]'); if (preferRange) { const candidate = trip!.availabilityRanges.find(range => range.id === preferRange.dataset.preferRange)!; void mutate(() => repository.selectPreferredDates(trip!.id, { start: candidate.start, end: candidate.end }), 'Preferred dates selected.'); return; }
-    if (target.closest('#tp-add-transport')) return openTransportDialog();
+    const preferRange = target.closest<HTMLElement>('[data-prefer-range]'); if (preferRange) { const candidate = trip!.availabilityRanges.find(range => range.id === preferRange.dataset.preferRange)!; void mutate(() => repository.selectPreferredDates(trip!.id, { start: candidate.start, end: candidate.end }), 'Dates locked in.'); return; }
+    if (target.closest('#tp-add-transport, [data-add-transport]')) return openTransportDialog();
     const editTransport = target.closest<HTMLElement>('[data-edit-transport]'); if (editTransport) return openTransportDialog(editTransport.dataset.editTransport);
     const removeTransport = target.closest<HTMLElement>('[data-remove-transport]'); if (removeTransport) { if (window.confirm('Delete this transport option?')) void mutate(() => repository.removeTransportOption(trip!.id, removeTransport.dataset.removeTransport!), 'Transport option deleted.'); return; }
     if (target.closest('#tp-add-stay')) return openStayDialog();
@@ -904,21 +1275,24 @@ export function mountTripPlanner(): void {
   ($('#tp-transport-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); void saveTransport(event.currentTarget as HTMLFormElement); });
   ($('#tp-stay-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); void saveStay(event.currentTarget as HTMLFormElement); });
   ($('#tp-activity-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); void saveActivity(event.currentTarget as HTMLFormElement); });
-  ($('#tp-trip-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; if (!validateForm(form)) return; const data = new FormData(form); closeDialogs(); void mutate(() => repository.updateTrip(trip!.id, { title: formValue(form, 'title'), destination: formValue(form, 'destination'), destinationCoordinates: coordinatesFromForm(data, 'destination'), availabilityWindow: { start: formValue(form, 'windowStart'), end: formValue(form, 'windowEnd') }, dateRange: { start: formValue(form, 'tripStart'), end: formValue(form, 'tripEnd') } }), 'Trip details updated.'); });
+  ($('#tp-trip-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; if (!validateForm(form)) return; const data = new FormData(form); closeDialogs(); void mutate(() => repository.updateTrip(trip!.id, { title: formValue(form, 'title'), destination: formValue(form, 'destination'), destinationCoordinates: coordinatesFromForm(data, 'destination'), availabilityWindow: trip!.availabilityWindow, dateRange: trip!.dateRange }), 'Trip details updated.'); });
 
-  const savedToken = new URLSearchParams(location.search).get('trip');
   if (savedToken) {
     const title = $('#tp-access-title');
     title.textContent = 'Loading saved trip…';
     void repository.restoreTrip(savedToken).then(result => {
-      if (result?.session) showTrip({ trip: result.trip, session: result.session });
-      else if (result) requestTripIdentity(result.trip);
-      else {
+      if (!result) {
         title.textContent = 'Create a trip';
         const error = $('#tp-access-error');
         error.textContent = 'This trip does not exist or the link is incomplete.';
         error.hidden = false;
+        return;
       }
+      tripAccess = result.access;
+      canEdit = result.access?.canEdit ?? true;
+      if (account?.tripSession) showTrip({ ...result, session: account.tripSession });
+      else if (result.session && canEdit) showTrip({ ...result, session: result.session });
+      else requestTripIdentity(result.trip);
     }).catch(() => {
       title.textContent = 'Create a trip';
       const error = $('#tp-access-error');

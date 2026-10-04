@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyMutation, createDemo, createTrip, importTrip, joinTrip, newTripId } from './trips';
+import { applyMutation, createTrip, importTrip, joinTrip, newTripId } from './trips';
+import { buildDemoTrip } from '../trip-planner/demo';
 import type { TripExport } from '../trip-planner/types';
 
 const request = {
@@ -39,7 +40,7 @@ describe('trip model', () => {
   });
 
   it('creates a complete demo journey for every traveller', () => {
-    const { trip } = createDemo();
+    const trip = buildDemoTrip('demo');
     for (const person of trip.participants) {
       const journeys = trip.transportOptions.filter(option => option.participantIds.includes(person.id));
       expect(journeys.some(option => option.departureAt.startsWith(trip.dateRange.start))).toBe(true);
