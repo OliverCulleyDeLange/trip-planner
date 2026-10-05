@@ -9,6 +9,7 @@ type AccountState = { user: { email: string; name: string }; tripSession?: TripS
 
 const repository = new ApiTripRepository();
 const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
+const tripUrl = (tripId: string) => `${appBase}/trips/${encodeURIComponent(tripId)}`;
 let trip: Trip | undefined;
 let session: TripSession | undefined;
 let account: AccountState | undefined;
@@ -19,6 +20,7 @@ let itineraryPersonId = '';
 let itineraryLayout: 'list' | 'calendar' = localStorage.getItem('trip-planner:itinerary-layout') === 'calendar' ? 'calendar' : 'list';
 let planningPersonId = '';
 let toastTimer = 0;
+let personDeletionPending = false;
 let setupCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let setupDraftStart: string | undefined;
 let setupRanges: { id: string; start: string; end: string }[] = [];
@@ -801,12 +803,22 @@ function openDeletePersonDialog(person: Participant): void {
   if (!dialog.open) dialog.showModal();
 }
 
-function confirmPersonDeletion(): void {
+async function confirmPersonDeletion(): Promise<void> {
+  if (personDeletionPending) return;
   const dialog = $<HTMLDialogElement>('#tp-delete-person-dialog');
   const person = trip?.participants.find(candidate => candidate.id === dialog.dataset.personId);
+  if (!person || !trip) return;
+  const button = $<HTMLButtonElement>('#tp-confirm-delete-person');
+  personDeletionPending = true;
+  button.disabled = true;
   dialog.close();
   delete dialog.dataset.personId;
-  if (person && trip) void mutate(() => repository.removeParticipant(trip!.id, person.id), `${person.name} deleted.`);
+  try {
+    await mutate(() => repository.removeParticipant(trip!.id, person.id), `${person.name} deleted.`);
+  } finally {
+    personDeletionPending = false;
+    button.disabled = false;
+  }
 }
 
 function addPermissionRow(permission?: TripPermission): void {
@@ -1088,10 +1100,7 @@ function showTrip(result: TripResult & { session: TripSession }): void {
   tripAccess = result.access ?? repository.getTripAccess(result.trip.id) ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false };
   canEdit = result.trip.id === 'demo' ? false : tripAccess.canEdit;
   itineraryPersonId = '';
-  history.replaceState({}, '', `${location.pathname}?trip=${trip.id}`);
   $<HTMLDialogElement>('#tp-join-dialog').close();
-  $('#tp-access').hidden = true;
-  $('#tp-app').hidden = false;
   const readOnlyPill = $('#tp-read-only-pill');
   readOnlyPill.textContent = trip.id === 'demo' ? 'Demo · View only' : 'View only';
   readOnlyPill.hidden = canEdit;
@@ -1104,7 +1113,6 @@ function requestTripIdentity(loadedTrip: Trip): void {
     showTrip({ trip: loadedTrip, session: { tripId: loadedTrip.id, participantId: '', displayName: 'Guest' } });
     return;
   }
-  $('#tp-access-title').textContent = loadedTrip.title;
   const dialog = $<HTMLDialogElement>('#tp-join-dialog');
   if (!dialog.open) dialog.showModal();
 }
@@ -1122,34 +1130,55 @@ function exportCurrentTrip(): void {
   showToast('Trip exported.');
 }
 
-async function importTripFile(file: File): Promise<void> {
+async function importTripFile(file: File): Promise<string> {
   const parsed = JSON.parse(await file.text()) as TripExport;
-  showTrip(await repository.importTrip(parsed));
-  showToast('Trip imported.');
+  return (await repository.importTrip(parsed)).trip.id;
 }
 
 export async function mountTripPlanner(): Promise<void> {
-  const setup = $('#tp-access-form') as HTMLFormElement;
-  const legacyDemoId = 'trip_demo0000000000000000000000000000';
-  const requestedTrip = new URLSearchParams(location.search).get('trip') ?? undefined;
-  const savedToken = requestedTrip === legacyDemoId ? 'demo' : requestedTrip;
-  if (requestedTrip === legacyDemoId) history.replaceState({}, '', `${location.pathname}?trip=demo`);
+  const root = $('#trip-planner-root');
+  const page = root.dataset.page;
+
+  if (page === 'home') {
+    const setup = $('#tp-access-form') as HTMLFormElement;
+    account = await loadAccount();
+    canEdit = true;
+    applyAccountDefaults();
+    enhanceForms();
+    renderSetupCalendar();
+    setup.addEventListener('submit', async event => {
+      event.preventDefault(); const button = setup.querySelector<HTMLButtonElement>('button[type="submit"]')!; const error = $('#tp-access-error'); button.disabled = true; button.textContent = 'Creating…'; error.hidden = true;
+      try {
+        if (!validateForm(setup)) throw new Error('Check the highlighted fields.');
+        if (!setupRanges.length) throw new Error('Select at least one potential date range.');
+        const setupData = new FormData(setup);
+        const result = await repository.createTrip({ displayName: formValue(setup, 'name'), title: formValue(setup, 'title'), destination: formValue(setup, 'destination'), destinationCoordinates: coordinatesFromForm(setupData, 'destination'), availabilityRanges: setupRanges.map(({ start, end }) => ({ start, end })) });
+        location.assign(tripUrl(result.trip.id));
+      } catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not create the trip.'; error.hidden = false; }
+      finally { button.disabled = false; button.textContent = 'Create trip'; }
+    });
+    $('#tp-import').addEventListener('click', () => $<HTMLInputElement>('#tp-import-file').click());
+    $<HTMLInputElement>('#tp-import-file').addEventListener('change', async event => {
+      const input = event.currentTarget as HTMLInputElement;
+      const file = input.files?.[0]; input.value = '';
+      if (!file) return;
+      try { location.assign(tripUrl(await importTripFile(file))); }
+      catch (error) { showToast(error instanceof Error ? error.message : 'Could not import this trip.'); }
+    });
+    root.addEventListener('click', event => {
+      const target = event.target as HTMLElement;
+      const setupDate = target.closest<HTMLButtonElement>('[data-setup-date]'); if (setupDate?.dataset.setupDate) { selectSetupDate(setupDate.dataset.setupDate); return; }
+      const removeSetupRange = target.closest<HTMLButtonElement>('[data-remove-setup-range]'); if (removeSetupRange) { setupRanges = setupRanges.filter(candidate => candidate.id !== removeSetupRange.dataset.removeSetupRange); renderSetupCalendar(); return; }
+      if (target.closest('#tp-setup-prev-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() - 1, 1); renderSetupCalendar(); return; }
+      if (target.closest('#tp-setup-next-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() + 1, 1); renderSetupCalendar(); }
+    });
+    return;
+  }
+
+  const savedToken = root.dataset.tripId;
   account = await loadAccount(savedToken);
   canEdit = true;
-  applyAccountDefaults();
   enhanceForms();
-  renderSetupCalendar();
-  setup.addEventListener('submit', async event => {
-    event.preventDefault(); const button = setup.querySelector<HTMLButtonElement>('button[type="submit"]')!; const error = $('#tp-access-error'); button.disabled = true; button.textContent = 'Creating…'; error.hidden = true;
-    try {
-      if (!validateForm(setup)) throw new Error('Check the highlighted fields.');
-      if (!setupRanges.length) throw new Error('Select at least one potential date range.');
-      const setupData = new FormData(setup);
-      const result = await repository.createTrip({ displayName: formValue(setup, 'name'), title: formValue(setup, 'title'), destination: formValue(setup, 'destination'), destinationCoordinates: coordinatesFromForm(setupData, 'destination'), availabilityRanges: setupRanges.map(({ start, end }) => ({ start, end })) });
-      showTrip(result);
-    } catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not create the trip.'; error.hidden = false; }
-    finally { button.disabled = false; button.textContent = 'Create trip'; }
-  });
 
   $<HTMLFormElement>('#tp-join-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -1168,23 +1197,6 @@ export async function mountTripPlanner(): Promise<void> {
   });
 
   $('#tp-export').addEventListener('click', exportCurrentTrip);
-  $('#tp-my-trips').addEventListener('click', async () => {
-    trip = undefined; session = undefined;
-    history.pushState({ tripPlannerHome: true }, '', location.pathname);
-    $('#tp-app').hidden = true; $('#tp-access').hidden = false;
-    $('#tp-access-title').textContent = 'Create a trip';
-    account = await loadAccount(); canEdit = true; applyAccountDefaults();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-  $('#tp-import').addEventListener('click', () => $<HTMLInputElement>('#tp-import-file').click());
-  window.addEventListener('popstate', () => location.reload());
-  $<HTMLInputElement>('#tp-import-file').addEventListener('change', async event => {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0]; input.value = '';
-    if (!file) return;
-    try { await importTripFile(file); }
-    catch (error) { showToast(error instanceof Error ? error.message : 'Could not import this trip.'); }
-  });
 
   $('#trip-planner-root').addEventListener('input', event => {
     const input = (event.target as HTMLElement).closest<HTMLInputElement>('[data-location-input]');
@@ -1275,7 +1287,7 @@ export async function mountTripPlanner(): Promise<void> {
     const removeTravelTime = target.closest<HTMLElement>('[data-remove-travel-time]'); if (removeTravelTime) { removeTravelTime.closest('.tp-travel-time-row')?.remove(); return; }
     const editPerson = target.closest<HTMLElement>('[data-edit-person]'); if (editPerson) return openPersonDialog(editPerson.dataset.editPerson);
     const removePerson = target.closest<HTMLElement>('[data-remove-person]'); if (removePerson) { const person = trip!.participants.find(candidate => candidate.id === removePerson.dataset.removePerson); if (person) openDeletePersonDialog(person); return; }
-    if (target.closest('#tp-confirm-delete-person')) { confirmPersonDeletion(); return; }
+    if (target.closest('#tp-confirm-delete-person')) { void confirmPersonDeletion(); return; }
     if (target.closest('#tp-add-range')) return openRangeDialog();
     const editRange = target.closest<HTMLElement>('[data-edit-range]'); if (editRange) return openRangeDialog(editRange.dataset.editRange);
     const removeRange = target.closest<HTMLElement>('[data-remove-range]'); if (removeRange) { void mutate(() => repository.removeAvailabilityRange(trip!.id, removeRange.dataset.removeRange!), 'Date range removed.'); return; }
@@ -1333,13 +1345,10 @@ export async function mountTripPlanner(): Promise<void> {
   ($('#tp-trip-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; if (!validateForm(form)) return; const data = new FormData(form); closeDialogs(); void mutate(() => repository.updateTrip(trip!.id, { title: formValue(form, 'title'), destination: formValue(form, 'destination'), destinationCoordinates: coordinatesFromForm(data, 'destination'), availabilityWindow: trip!.availabilityWindow, dateRange: trip!.dateRange }), 'Trip details updated.'); });
 
   if (savedToken) {
-    const title = $('#tp-access-title');
     void repository.restoreTrip(savedToken).then(result => {
       if (!result) {
-        title.textContent = 'Create a trip';
-        const error = $('#tp-access-error');
-        error.textContent = 'This trip does not exist or the link is incomplete.';
-        error.hidden = false;
+        $('#tp-title').textContent = 'Trip not found';
+        $('#tp-content').innerHTML = '<section class="tp-loading-state tp-error-state"><h1>Trip not found</h1><p>This trip does not exist or the link is incomplete.</p><a class="tp-button tp-button-primary" href="' + appBase + '/">Create a trip</a></section>';
         return;
       }
       tripAccess = result.access;
@@ -1348,10 +1357,11 @@ export async function mountTripPlanner(): Promise<void> {
       else if (result.session && canEdit) showTrip({ ...result, session: result.session });
       else requestTripIdentity(result.trip);
     }).catch(() => {
-      title.textContent = 'Create a trip';
-      const error = $('#tp-access-error');
-      error.textContent = 'The saved trip could not be loaded.';
-      error.hidden = false;
+      $('#tp-title').textContent = 'Could not load trip';
+      $('#tp-content').innerHTML = '<section class="tp-loading-state tp-error-state"><h1>Could not load this trip</h1><p>Please refresh the page and try again.</p><a class="tp-button tp-button-primary" href="">Try again</a></section>';
     });
+  } else {
+    $('#tp-title').textContent = 'Trip not found';
+    $('#tp-content').innerHTML = '<section class="tp-loading-state tp-error-state"><h1>Trip not found</h1><p>The trip link is incomplete.</p><a class="tp-button tp-button-primary" href="' + appBase + '/">Create a trip</a></section>';
   }
 }

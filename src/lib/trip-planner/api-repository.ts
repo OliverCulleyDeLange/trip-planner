@@ -79,11 +79,21 @@ export class ApiTripRepository implements TripRepository {
   voteForActivity(tripId: Id, activityId: Id, participantId: Id, vote: VoteValue): Promise<Trip> { return this.mutate(tripId, 'voteForActivity', { activityId, participantId, vote }); }
   selectActivity(tripId: Id, activityId: Id): Promise<Trip> { return this.mutate(tripId, 'selectActivity', { activityId }); }
 
-  private async mutate(tripId: Id, operation: string, payload: unknown): Promise<Trip> {
-    const result = await this.request<TripResult>(`/trips/${encodeURIComponent(tripId)}/mutate`, {
-      method: 'POST', body: JSON.stringify({ operation, payload, expectedRevision: this.requireTrip(tripId).revision }),
-    }, tripId);
-    return this.storeResult(result).trip;
+  private async mutate(tripId: Id, operation: string, payload: unknown, retryConflict = true): Promise<Trip> {
+    try {
+      const result = await this.request<TripResult>(`/trips/${encodeURIComponent(tripId)}/mutate`, {
+        method: 'POST', body: JSON.stringify({ operation, payload, expectedRevision: this.requireTrip(tripId).revision }),
+      }, tripId);
+      return this.storeResult(result).trip;
+    } catch (error) {
+      if (!(error instanceof RevisionConflictError)) throw error;
+      const latest = this.requireTrip(tripId);
+      if (operation === 'removeParticipant' && !latest.participants.some(person => person.id === (payload as { participantId: Id }).participantId)) {
+        return structuredClone(latest);
+      }
+      if (retryConflict) return this.mutate(tripId, operation, payload, false);
+      throw error;
+    }
   }
 
   private requireTrip(tripId: Id): Trip {
@@ -105,8 +115,8 @@ export class ApiTripRepository implements TripRepository {
       headers: { 'content-type': 'application/json', ...init.headers },
     });
     if (response.status === 409 && conflictTripId) {
-      const conflict = await this.parse<TripResult>(response);
-      this.storeResult(conflict);
+      const conflict = await response.json().catch(() => undefined) as TripResult | undefined;
+      if (conflict?.trip) this.storeResult(conflict);
       throw new RevisionConflictError();
     }
     return this.parse<T>(response);
