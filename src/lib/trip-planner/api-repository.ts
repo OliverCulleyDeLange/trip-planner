@@ -63,6 +63,7 @@ export class ApiTripRepository implements TripRepository {
   resetAvailability(tripId: Id): Promise<Trip> { return this.mutate(tripId, 'resetAvailability', {}); }
   selectPreferredDates(tripId: Id, range: { start: string; end: string }): Promise<Trip> { return this.mutate(tripId, 'selectPreferredDates', range); }
   saveParticipant(tripId: Id, participant: Participant): Promise<Trip> { return this.mutate(tripId, 'saveParticipant', participant); }
+  removeParticipant(tripId: Id, participantId: Id): Promise<Trip> { return this.mutate(tripId, 'removeParticipant', { participantId }); }
   setAvailability(tripId: Id, participantId: Id, date: string, slot: AvailabilitySlot, status: AvailabilityStatus): Promise<Trip> { return this.mutate(tripId, 'setAvailability', { participantId, date, slot, status }); }
   setRangeAvailability(tripId: Id, participantId: Id, start: string, end: string, status: AvailabilityStatus): Promise<Trip> { return this.mutate(tripId, 'setRangeAvailability', { participantId, start, end, status }); }
   saveTransportOption(tripId: Id, option: TransportOption): Promise<Trip> { return this.mutate(tripId, 'saveTransportOption', option); }
@@ -70,6 +71,7 @@ export class ApiTripRepository implements TripRepository {
   voteForTransport(tripId: Id, transportId: Id, participantId: Id, vote: VoteValue): Promise<Trip> { return this.mutate(tripId, 'voteForTransport', { transportId, participantId, vote }); }
   selectTransport(tripId: Id, transportId: Id): Promise<Trip> { return this.mutate(tripId, 'selectTransport', { transportId }); }
   saveAccommodationOption(tripId: Id, option: AccommodationOption): Promise<Trip> { return this.mutate(tripId, 'saveAccommodationOption', option); }
+  removeAccommodationOption(tripId: Id, accommodationId: Id): Promise<Trip> { return this.mutate(tripId, 'removeAccommodationOption', { accommodationId }); }
   voteForAccommodation(tripId: Id, accommodationId: Id, participantId: Id, vote: VoteValue): Promise<Trip> { return this.mutate(tripId, 'voteForAccommodation', { accommodationId, participantId, vote }); }
   selectAccommodation(tripId: Id, accommodationId: Id): Promise<Trip> { return this.mutate(tripId, 'selectAccommodation', { accommodationId }); }
   saveActivityOption(tripId: Id, activity: ActivityOption): Promise<Trip> { return this.mutate(tripId, 'saveActivityOption', activity); }

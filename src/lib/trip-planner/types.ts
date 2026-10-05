@@ -79,6 +79,7 @@ export interface TransportOption {
   departureAt: string;
   arrivalAt: string;
   participantIds: Id[];
+  seats?: number;
   pricePerPerson: number;
   currency: 'GBP' | 'EUR';
   bookingUrl?: string;
@@ -214,6 +215,7 @@ export interface TripRepository {
   resetAvailability(tripId: Id): Promise<Trip>;
   selectPreferredDates(tripId: Id, range: { start: string; end: string }): Promise<Trip>;
   saveParticipant(tripId: Id, participant: Participant): Promise<Trip>;
+  removeParticipant(tripId: Id, participantId: Id): Promise<Trip>;
   setAvailability(tripId: Id, participantId: Id, date: string, slot: AvailabilitySlot, status: AvailabilityStatus): Promise<Trip>;
   setRangeAvailability(tripId: Id, participantId: Id, start: string, end: string, status: AvailabilityStatus): Promise<Trip>;
   saveTransportOption(tripId: Id, option: TransportOption): Promise<Trip>;
@@ -221,6 +223,7 @@ export interface TripRepository {
   voteForTransport(tripId: Id, transportId: Id, participantId: Id, vote: VoteValue): Promise<Trip>;
   selectTransport(tripId: Id, transportId: Id): Promise<Trip>;
   saveAccommodationOption(tripId: Id, option: AccommodationOption): Promise<Trip>;
+  removeAccommodationOption(tripId: Id, accommodationId: Id): Promise<Trip>;
   voteForAccommodation(tripId: Id, accommodationId: Id, participantId: Id, vote: VoteValue): Promise<Trip>;
   selectAccommodation(tripId: Id, accommodationId: Id): Promise<Trip>;
   saveActivityOption(tripId: Id, activity: ActivityOption): Promise<Trip>;

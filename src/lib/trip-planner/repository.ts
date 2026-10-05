@@ -248,6 +248,24 @@ export class LocalTripRepository implements TripRepository {
     return this.commit(trip);
   }
 
+  async removeParticipant(tripId: Id, participantId: Id): Promise<Trip> {
+    await pause();
+    const trip = this.requireTrip(tripId);
+    if (trip.participants.length <= 1) throw new Error('A trip needs at least one person.');
+    if (!trip.participants.some(person => person.id === participantId)) throw new Error('Person not found.');
+    trip.participants = trip.participants.filter(person => person.id !== participantId);
+    trip.availability = trip.availability.filter(entry => entry.participantId !== participantId);
+    trip.participants.forEach(person => {
+      if (person.sleepingPreferences.shareDoubleWithParticipantId === participantId) person.sleepingPreferences.shareDoubleWithParticipantId = undefined;
+      person.sleepingPreferences.shareWithParticipantIds = person.sleepingPreferences.shareWithParticipantIds.filter(id => id !== participantId);
+    });
+    [...trip.transportOptions, ...trip.accommodationOptions, ...trip.activities].forEach(option => {
+      if (option.participantIds) option.participantIds = option.participantIds.filter(id => id !== participantId);
+      delete option.votes[participantId];
+    });
+    return this.commit(trip);
+  }
+
   async setAvailability(tripId: Id, participantId: Id, date: string, slot: AvailabilitySlot, status: AvailabilityStatus): Promise<Trip> {
     await pause();
     const trip = this.requireTrip(tripId);
@@ -303,6 +321,13 @@ export class LocalTripRepository implements TripRepository {
     const trip = this.requireTrip(tripId);
     const index = trip.accommodationOptions.findIndex(candidate => candidate.id === option.id);
     if (index >= 0) trip.accommodationOptions[index] = clone(option); else trip.accommodationOptions.push(clone(option));
+    return this.commit(trip);
+  }
+
+  async removeAccommodationOption(tripId: Id, accommodationId: Id): Promise<Trip> {
+    await pause();
+    const trip = this.requireTrip(tripId);
+    trip.accommodationOptions = trip.accommodationOptions.filter(option => option.id !== accommodationId);
     return this.commit(trip);
   }
 

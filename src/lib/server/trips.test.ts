@@ -47,4 +47,33 @@ describe('trip model', () => {
       expect(journeys.some(option => option.departureAt.startsWith(trip.dateRange.end))).toBe(true);
     }
   });
+
+  it('deletes a person and removes their linked trip data', () => {
+    const trip = buildDemoTrip('demo');
+    const removed = trip.participants[1];
+    trip.participants[0].sleepingPreferences.shareDoubleWithParticipantId = removed.id;
+    trip.participants[0].sleepingPreferences.shareWithParticipantIds.push(removed.id);
+    applyMutation(trip, { operation: 'removeParticipant', payload: { participantId: removed.id } });
+
+    expect(trip.participants.some(person => person.id === removed.id)).toBe(false);
+    expect(trip.availability.some(entry => entry.participantId === removed.id)).toBe(false);
+    expect(trip.participants.some(person => person.sleepingPreferences.shareDoubleWithParticipantId === removed.id)).toBe(false);
+    expect(trip.participants.some(person => person.sleepingPreferences.shareWithParticipantIds.includes(removed.id))).toBe(false);
+    for (const option of [...trip.transportOptions, ...trip.accommodationOptions, ...trip.activities]) {
+      expect(option.participantIds?.includes(removed.id)).toBe(false);
+      expect(option.votes[removed.id]).toBeUndefined();
+    }
+  });
+
+  it('keeps at least one person in a trip', () => {
+    const { trip } = createTrip(request);
+    expect(() => applyMutation(trip, { operation: 'removeParticipant', payload: { participantId: trip.participants[0].id } })).toThrow('A trip needs at least one person.');
+  });
+
+  it('deletes an accommodation option', () => {
+    const trip = buildDemoTrip('demo');
+    const accommodationId = trip.accommodationOptions[0].id;
+    applyMutation(trip, { operation: 'removeAccommodationOption', payload: { accommodationId } });
+    expect(trip.accommodationOptions.some(option => option.id === accommodationId)).toBe(false);
+  });
 });

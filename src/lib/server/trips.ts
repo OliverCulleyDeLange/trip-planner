@@ -125,6 +125,7 @@ export function applyMutation(trip: Trip, mutation: TripMutation): Trip {
       trip.preferredDateRange = clone(selected); trip.dateRange = clone(selected); break;
     }
     case 'saveParticipant': saveParticipant(trip, mutation.payload as Participant); break;
+    case 'removeParticipant': removeParticipant(trip, String(payload.participantId)); break;
     case 'setAvailability': {
       const entry = payload as unknown as { participantId: string; date: string; slot: AvailabilitySlot; status: AvailabilityStatus };
       const existing = trip.availability.find(candidate => candidate.participantId === entry.participantId && candidate.date === entry.date && candidate.slot === entry.slot);
@@ -145,6 +146,7 @@ export function applyMutation(trip: Trip, mutation: TripMutation): Trip {
       selected.status = selected.status === 'selected' ? 'shortlisted' : 'selected'; break;
     }
     case 'saveAccommodationOption': upsert(trip.accommodationOptions, mutation.payload as AccommodationOption); break;
+    case 'removeAccommodationOption': trip.accommodationOptions = trip.accommodationOptions.filter(option => option.id !== String(payload.accommodationId)); break;
     case 'voteForAccommodation': requireItem(trip.accommodationOptions, String(payload.accommodationId), 'Accommodation').votes[String(payload.participantId)] = payload.vote as VoteValue; break;
     case 'selectAccommodation': trip.accommodationOptions.forEach(option => { option.status = option.id === String(payload.accommodationId) ? 'selected' : 'shortlisted'; }); break;
     case 'saveActivityOption': upsert(trip.activities, mutation.payload as ActivityOption); break;
@@ -188,4 +190,19 @@ function saveParticipant(trip: Trip, participant: Participant): void {
     partner.sleepingPreferences.ownBed = false;
     if (!partner.sleepingPreferences.shareWithParticipantIds.includes(participant.id)) partner.sleepingPreferences.shareWithParticipantIds.push(participant.id);
   }
+}
+
+function removeParticipant(trip: Trip, participantId: string): void {
+  if (trip.participants.length <= 1) throw new Error('A trip needs at least one person.');
+  if (!trip.participants.some(person => person.id === participantId)) throw new Error('Person not found.');
+  trip.participants = trip.participants.filter(person => person.id !== participantId);
+  trip.availability = trip.availability.filter(entry => entry.participantId !== participantId);
+  trip.participants.forEach(person => {
+    if (person.sleepingPreferences.shareDoubleWithParticipantId === participantId) person.sleepingPreferences.shareDoubleWithParticipantId = undefined;
+    person.sleepingPreferences.shareWithParticipantIds = person.sleepingPreferences.shareWithParticipantIds.filter(id => id !== participantId);
+  });
+  [...trip.transportOptions, ...trip.accommodationOptions, ...trip.activities].forEach(option => {
+    if (option.participantIds) option.participantIds = option.participantIds.filter(id => id !== participantId);
+    delete option.votes[participantId];
+  });
 }

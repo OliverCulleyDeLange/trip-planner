@@ -21,11 +21,9 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
             <span>Trip name</span>
             <input id="tp-new-title" name="title" placeholder="e.g. Ski trip 2027" required />
           </label>
-          <label class="tp-location-field">
+          <label>
             <span>Where are you thinking?</span>
-            <input id="tp-new-destination" name="destination" placeholder="A place, region or a few options" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input required />
-            <input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon />
-            <span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small>
+            <input id="tp-new-destination" name="destination" placeholder="A place, region or a few options" required />
           </label>
           <div class="tp-setup-calendar-section">
             <div class="tp-setup-calendar-head">
@@ -38,6 +36,7 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           <p class="tp-form-error" id="tp-access-error" role="alert" hidden></p>
           <button class="tp-button tp-button-primary tp-button-large" type="submit" disabled>Create trip</button>
         </form>
+        <div class="tp-home-import"><span>Already have a trip file?</span><button class="tp-button tp-button-quiet" id="tp-import" type="button">Import trip</button><input id="tp-import-file" type="file" accept="application/json,.json" hidden /></div>
         </section>
       </div>
     </section>
@@ -54,10 +53,13 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
         <div class="tp-top-actions">
           <span class="tp-saving" id="tp-saving" aria-live="polite"></span>
           <span class="tp-read-only-pill" id="tp-read-only-pill" hidden>View only</span>
-          <button class="tp-button tp-button-quiet" id="tp-import" type="button">Import</button>
-          <input id="tp-import-file" type="file" accept="application/json,.json" hidden />
-          <button class="tp-button tp-button-quiet" id="tp-export" type="button">Export</button>
           <button class="tp-button tp-button-quiet tp-mobile-hide" id="tp-share" type="button">Copy trip link</button>
+          <details class="tp-settings-menu" id="tp-settings-menu">
+            <summary class="tp-settings-button" aria-label="Trip settings" title="Trip settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary>
+            <div class="tp-settings-popover">
+              <button id="tp-export" type="button">Export trip</button>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -113,15 +115,26 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           <label><input name="roomPreference" value="prefer-own" type="checkbox" /><span>Would prefer own</span></label>
           <label><input name="roomPreference" value="require-own" type="checkbox" /><span>Needs own room</span></label>
         </div></fieldset>
-        <fieldset class="tp-preference-fieldset"><legend>Bed preference</legend><div class="tp-option-checks" id="tp-bed-preferences">
-          <label><input name="bedPreference" value="own-bed" type="checkbox" checked /><span>Own bed</span></label>
-          <label><input name="bedPreference" value="share-anyone" type="checkbox" /><span>Share with anyone</span></label>
-          <label><input name="bedPreference" value="share-women" type="checkbox" /><span>Share with women / girls</span></label>
-          <label><input name="bedPreference" value="share-men" type="checkbox" /><span>Share with men / boys</span></label>
-        </div><div class="tp-option-checks tp-person-share-checks" id="tp-share-person-checks"></div></fieldset>
+        <fieldset class="tp-preference-fieldset"><legend>Bed preference</legend><div class="tp-bed-preference-rows" id="tp-bed-preferences">
+          <div class="tp-bed-preference-row"><strong>Own bed</strong><div class="tp-option-checks"><label><input name="bedPreference" value="own-bed" type="checkbox" checked /><span>Own bed</span></label></div></div>
+          <div class="tp-bed-preference-row"><strong>Share with</strong><div class="tp-option-checks">
+            <label><input name="bedPreference" value="share-anyone" type="checkbox" /><span>Anyone</span></label>
+            <label><input name="bedPreference" value="share-women" type="checkbox" /><span>Girls</span></label>
+            <label><input name="bedPreference" value="share-men" type="checkbox" /><span>Boys</span></label>
+          </div></div>
+          <div class="tp-bed-preference-row"><strong>Share with</strong><div class="tp-option-checks tp-person-share-checks" id="tp-share-person-checks"></div></div>
+        </div></fieldset>
         <fieldset><legend>Bags</legend><div class="tp-bag-list" id="tp-bag-list"></div><button class="tp-button tp-button-quiet tp-add-bag" id="tp-add-bag" type="button">+ Add bag</button></fieldset>
         <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save person</button></div>
       </form>
+    </dialog>
+
+    <dialog class="tp-dialog tp-small-dialog" id="tp-delete-person-dialog">
+      <div class="tp-confirm-dialog">
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Remove traveller</p><h2>Delete <span id="tp-delete-person-name"></span>?</h2></div><button class="tp-icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <p class="tp-confirm-dialog-copy">Their availability, votes and trip assignments will also be removed.</p>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-danger" id="tp-confirm-delete-person" type="button">Delete person</button></div>
+      </div>
     </dialog>
 
     <dialog class="tp-dialog tp-small-dialog" id="tp-range-dialog">
@@ -146,6 +159,7 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           <label><span>Title</span><input name="title" placeholder="Manchester to Turin" required /></label>
           <label><span>Mode</span><select name="mode" required><option value="flight">Flight</option><option value="train">Train</option><option value="coach">Coach</option><option value="car">Car</option><option value="ferry">Ferry</option></select></label>
           <label data-transport-modes="flight train coach ferry"><span>Operator</span><input name="operator" placeholder="e.g. Jet2 or Eurostar" /></label>
+          <label data-transport-modes="car"><span>Seats</span><input name="seats" type="number" min="1" step="1" placeholder="5" /></label>
           <label><span>Price per person</span><input name="price" type="number" min="0" step="0.01" placeholder="149.00" /></label>
           <label class="tp-location-field"><span>From</span><input name="origin" placeholder="Manchester" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
           <label class="tp-location-field"><span>To</span><input name="destination" placeholder="Turin" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
@@ -160,7 +174,7 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           <label class="tp-wide-field" data-transport-modes="flight"><span>Official baggage rules URL</span><input name="baggageUrl" type="url" placeholder="https://operator.com/baggage" /></label>
           <label class="tp-wide-field"><span>Booking reference</span><input name="bookingReference" placeholder="Add after booking" /></label>
         </div>
-        <fieldset><legend>Travellers</legend><div class="tp-person-checks" id="tp-person-checks"></div></fieldset>
+        <fieldset><legend>Travellers</legend><div class="tp-fieldset-heading"><small>Select everyone taking this option.</small><button class="tp-text-button" type="button" id="tp-clear-transport-people">Clear</button></div><div class="tp-person-checks" id="tp-person-checks"></div><p class="tp-capacity-warning" id="tp-transport-capacity-warning" role="alert" hidden></p></fieldset>
         <div class="tp-dialog-actions">
           <button class="tp-button tp-button-quiet" value="cancel" type="button" data-close-dialog>Cancel</button>
           <button class="tp-button tp-button-primary" value="default" type="submit">Add option</button>
