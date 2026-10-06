@@ -67,7 +67,14 @@ Manual deployments:
 pnpm deploy:production
 ```
 
-`.github/workflows/ci.yml` checks every pull request and deploys `main` to production. Add a narrowly scoped `CLOUDFLARE_API_TOKEN` to the GitHub production environment before enabling automatic deploys.
+`.github/workflows/ci.yml` verifies pushes and pull requests. Cloudflare Workers Builds deploys `main` directly from GitHub using these settings:
+
+- Root directory: `/`
+- Build command: `pnpm build`
+- Deploy command: `pnpm deploy:worker`
+- Production branch: `main`
+
+Cloudflare owns the build token, so the GitHub repository does not need a `CLOUDFLARE_API_TOKEN`. The deploy command applies pending D1 migrations before uploading the generated Astro Worker.
 
 ## Recovery
 

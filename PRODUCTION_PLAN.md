@@ -22,8 +22,8 @@ This plan turns the working browser-only prototype into a separately deployed ap
 - [x] Proxy optional Geoapify geocoding through the Worker and, when enabled, store `GEOAPIFY_API_KEY` as a Cloudflare Workers secret; do not expose it through a `PUBLIC_` environment variable in production.
 - [x] Add record revision checks so stale edits cannot silently overwrite newer data.
 - [x] Add separate preview and production environments.
-- [x] Add CI verification and conditional preview/production deployment jobs.
-- [ ] Activate automatic GitHub deployments by adding a scoped `CLOUDFLARE_API_TOKEN` or connecting Cloudflare Workers Builds. This requires a one-time GitHub/Cloudflare authorization.
+- [x] Add verification-only GitHub Actions CI.
+- [ ] Connect the existing `trip-scheduler` Worker to `OliverCulleyDeLange/trip-planner` with Cloudflare Workers Builds for automatic `main` deployments.
 
 
 ## Data model
