@@ -1,12 +1,13 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "trip-scheduler",
-	"account_id": "9c3bb12edbab6db746c28e5b53c4d59d",
+	"account_id": "e07409ca802c44c917ffee7a4a97af1b",
 	"main": "@astrojs/cloudflare/entrypoints/server",
 	"compatibility_date": "2026-10-01",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"workers_dev": true,
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "dist"
@@ -14,11 +15,17 @@
 	"observability": {
 		"enabled": true
 	},
+	"routes": [
+		{
+			"pattern": "oliverdelange.co.uk/trip-planner*",
+			"zone_name": "oliverdelange.co.uk"
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "trip-scheduler-production",
-			"database_id": "7c4d5a66-daf2-48b6-b112-9b398e4b50a5",
+			"database_id": "fc577354-8036-4bad-a2a1-4c9a8791d5fc",
 			"migrations_dir": "migrations"
 		}
 	]

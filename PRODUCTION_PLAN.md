@@ -7,9 +7,9 @@ This plan turns the working browser-only prototype into a separately deployed ap
 - [x] Use `OliverCulleyDeLange/trip-planner` as the dedicated repository.
 - [x] Replace the obsolete prototype on the `rebuild-trip-planner` branch.
 - [x] Keep the application and infrastructure on Cloudflare.
-- [x] Use a dedicated Cloudflare account for Trip Scheduler; do not create resources in the existing `artycards` account.
+- [x] Keep Trip Scheduler resources in the `oliverdelange` Cloudflare account, separate from `artycards`.
 - [x] Keep Astro for the extracted frontend instead of rewriting the working UI
-- [x] Launch at `trip-scheduler.oliver-trip-planner.workers.dev`; choose a custom hostname separately if desired.
+- [x] Serve production directly from `https://oliverdelange.co.uk/trip-planner/` without an intermediary proxy Worker.
 
 
 ## First production release
@@ -19,7 +19,7 @@ This plan turns the working browser-only prototype into a separately deployed ap
 - [x] Implement a D1-backed `TripRepository` behind server endpoints.
 - [x] Give each trip a high-entropy, unguessable ID and allow anyone with its private trip link to view and edit the whole trip.
 - [x] Give each browser an anonymous signed session for request validation and rate limiting.
-- [x] Proxy Geoapify geocoding through a rate-limited Worker endpoint and store `GEOAPIFY_API_KEY` as a Cloudflare Workers secret; do not expose it through a `PUBLIC_` environment variable in production.
+- [x] Proxy optional Geoapify geocoding through the Worker and, when enabled, store `GEOAPIFY_API_KEY` as a Cloudflare Workers secret; do not expose it through a `PUBLIC_` environment variable in production.
 - [x] Add record revision checks so stale edits cannot silently overwrite newer data.
 - [x] Add separate preview and production environments.
 - [x] Add CI verification and conditional preview/production deployment jobs.
@@ -45,7 +45,7 @@ Every editable record should include `trip_id`, `created_at`, `updated_at` and a
 
 - **Workers and Astro:** serve the application, static assets and shared API.
 - **D1:** shared relational trip data and migrations.
-- **Workers secrets:** session-cookie signing and external API credentials, including `GEOAPIFY_API_KEY`.
+- **Workers secrets:** required session-cookie signing and optional external API credentials such as `GEOAPIFY_API_KEY`.
 - **Web Analytics and Worker logs:** basic production visibility.
 - **D1 Time Travel:** recovery from accidental writes or migrations.
 

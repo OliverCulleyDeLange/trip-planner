@@ -17,8 +17,7 @@
     "db:migrate:production": "wrangler d1 migrations apply DB --remote",
     "db:reset:local": "wrangler d1 execute DB --local --file scripts/reset-database.sql && wrangler d1 migrations apply DB --local",
     "db:reset:production": "wrangler d1 execute DB --remote --file scripts/reset-database.sql && wrangler d1 migrations apply DB --remote",
-    "deploy:production": "pnpm build && wrangler deploy",
-    "deploy:domain-proxy": "wrangler deploy --config domain-proxy/wrangler.jsonc"
+    "deploy:production": "pnpm build && wrangler deploy --config dist/server/wrangler.json"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^13.7.0",

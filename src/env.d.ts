@@ -20,7 +20,7 @@ declare namespace App {
 interface CloudflareEnv {
   DB: D1Database;
   COOKIE_SIGNING_SECRET: string;
-  GEOAPIFY_API_KEY: string;
+  GEOAPIFY_API_KEY?: string;
 }
 
 declare module 'cloudflare:workers' {

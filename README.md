@@ -2,11 +2,12 @@
 
 A collaborative group-trip planner deployed on Cloudflare Workers. There are no accounts or login: anyone with a trip's high-entropy URL can join by choosing an existing traveller or adding their name.
 
-Production: <https://trip-scheduler.oliver-trip-planner.workers.dev>
+Production: <https://oliverdelange.co.uk/trip-planner/>
 
 ## Architecture
 
 - Astro 6 application and API routes on Cloudflare Workers
+- The application Worker is routed directly at `oliverdelange.co.uk/trip-planner/*`
 - A production D1 database plus a separate local database for development
 - Relational D1 tables for trips, participants, date options, availability, transport, accommodation, activities and anonymous browser sessions
 - Optimistic revision checks reject stale writes with HTTP `409`
@@ -44,14 +45,15 @@ pnpm db:migrate:local
 pnpm db:migrate:production
 ```
 
-The production D1 database ID and Cloudflare account ID are pinned in `wrangler.jsonc` so commands cannot silently target another account or database.
+The production D1 database ID and `oliverdelange` Cloudflare account ID are pinned in `wrangler.jsonc` so commands cannot silently target another account or database.
 
 ## Secrets
 
-Production requires `COOKIE_SIGNING_SECRET` and `GEOAPIFY_API_KEY`:
+Production requires `COOKIE_SIGNING_SECRET`. `GEOAPIFY_API_KEY` is optional; without it, location search and geocoding return HTTP `503` while the rest of the planner remains available.
 
 ```sh
 pnpm wrangler secret put COOKIE_SIGNING_SECRET --env=""
+# Optional
 pnpm wrangler secret put GEOAPIFY_API_KEY --env=""
 ```
 
