@@ -23,7 +23,7 @@ This plan turns the working browser-only prototype into a separately deployed ap
 - [x] Add record revision checks so stale edits cannot silently overwrite newer data.
 - [x] Add separate preview and production environments.
 - [x] Add verification-only GitHub Actions CI.
-- [ ] Connect the existing `trip-scheduler` Worker to `OliverCulleyDeLange/trip-planner` with Cloudflare Workers Builds for automatic `main` deployments.
+- [x] Connect the existing `trip-scheduler` Worker to `OliverCulleyDeLange/trip-planner` with Cloudflare Workers Builds for automatic `main` deployments.
 
 
 ## Data model
