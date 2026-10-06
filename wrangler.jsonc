@@ -14,15 +14,6 @@
 	"observability": {
 		"enabled": true
 	},
-	"access": {
-		"dev": {
-			"aud": "trip-planner-local",
-			"identity": {
-				"email": "olly@oliverdelange.co.uk",
-				"name": "Olly"
-			}
-		}
-	},
 	"d1_databases": [
 		{
 			"binding": "DB",

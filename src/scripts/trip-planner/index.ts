@@ -1,19 +1,15 @@
 import { ApiTripRepository, RevisionConflictError, type TripResult } from '../../lib/trip-planner/api-repository';
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, BedType, BaggageItem, GeoCoordinates, Participant,
-  Room, TransportMode, TransportOption, Trip, TripAccessState, TripExport, TripPermission, TripSession, VoteValue,
+  Room, TransportMode, TransportOption, Trip, TripExport, TripSession, VoteValue,
 } from '../../lib/trip-planner/types';
 
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
-type AccountState = { user: { email: string; name: string }; tripSession?: TripSession };
-
 const repository = new ApiTripRepository();
 const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 const tripUrl = (tripId: string) => `${appBase}/trips/${encodeURIComponent(tripId)}`;
 let trip: Trip | undefined;
 let session: TripSession | undefined;
-let account: AccountState | undefined;
-let tripAccess: TripAccessState | undefined;
 let canEdit = false;
 let activeView: View = 'overview';
 let itineraryPersonId = '';
@@ -63,25 +59,8 @@ const demoEditSelector = [
   '#tp-edit-trip', '#tp-add-person', '#tp-add-range', '#tp-add-transport', '[data-add-transport]', '#tp-add-stay', '#tp-add-activity',
   '[data-edit-person]', '[data-remove-person]', '[data-edit-range]', '[data-remove-range]', '[data-prefer-range]', '[data-edit-transport]', '[data-remove-transport]',
   '[data-edit-stay]', '[data-remove-stay]', '[data-edit-activity]', '[data-remove-activity]', '[data-select-stay]', '[data-select-transport]', '[data-select-activity]',
-  '[data-range-start]', '[data-date]', '[data-vote]', '[data-transport-vote]', '[data-activity-vote]', '.tp-completion button', '[data-restrict-access]',
+  '[data-range-start]', '[data-date]', '[data-vote]', '[data-transport-vote]', '[data-activity-vote]', '.tp-completion button',
 ].join(', ');
-
-async function loadAccount(tripId?: string): Promise<AccountState | undefined> {
-  try {
-    const query = tripId ? `?trip=${encodeURIComponent(tripId)}` : '';
-    const response = await fetch(`${appBase}/api/account/session${query}`, { credentials: 'same-origin', redirect: 'manual' });
-    if (!response.ok || response.type === 'opaqueredirect') return undefined;
-    return await response.json() as AccountState;
-  } catch {
-    return undefined;
-  }
-}
-
-function applyAccountDefaults(): void {
-  if (!account) return;
-  const name = $<HTMLInputElement>('#tp-name');
-  if (!name.value) name.value = account.user.name;
-}
 
 function coordinatesFromForm(data: FormData, name: string): GeoCoordinates | undefined {
   const latitudeValue = String(data.get(`${name}Latitude`) ?? '');
@@ -821,44 +800,12 @@ async function confirmPersonDeletion(): Promise<void> {
   }
 }
 
-function addPermissionRow(permission?: TripPermission): void {
-  $('#tp-permission-list').insertAdjacentHTML('beforeend', `<div class="tp-permission-row"><input type="email" name="permissionEmail" placeholder="friend@example.com" value="${escapeHtml(permission?.email ?? '')}" /><select name="permissionRole"><option value="viewer" ${permission?.role === 'viewer' ? 'selected' : ''}>Viewer</option><option value="editor" ${permission?.role === 'editor' ? 'selected' : ''}>Editor</option></select><button class="tp-icon-button" type="button" data-remove-permission aria-label="Remove permission">×</button></div>`);
-}
-
-function renderTripAccessSettings(): void {
-  $('#tp-trip-access-settings').hidden = true;
-}
-
-async function saveAccessSettings(): Promise<void> {
-  if (!trip) return;
-  const form = $<HTMLFormElement>('#tp-trip-form');
-  const mode = (form.elements.namedItem('accessMode') as RadioNodeList).value as 'public-link' | 'restricted';
-  const rows = [...form.querySelectorAll<HTMLElement>('.tp-permission-row')];
-  const permissions = rows.map(row => ({
-    email: row.querySelector<HTMLInputElement>('[name="permissionEmail"]')!.value,
-    role: row.querySelector<HTMLSelectElement>('[name="permissionRole"]')!.value as 'viewer' | 'editor',
-  })).filter(permission => permission.email.trim());
-  const error = $('#tp-access-settings-error');
-  error.hidden = true;
-  try {
-    tripAccess = await repository.saveTripAccess(trip.id, mode, permissions);
-    canEdit = tripAccess.canEdit;
-    renderTripAccessSettings(); render();
-    showToast('Trip access updated.');
-  } catch (caught) {
-    error.textContent = caught instanceof Error ? caught.message : 'Could not update trip access.';
-    error.hidden = false;
-  }
-}
-
-function openTripDialog(showAccess = false): void {
+function openTripDialog(): void {
   const form = $('#tp-trip-form') as HTMLFormElement;
   (form.elements.namedItem('title') as HTMLInputElement).value = trip!.title;
   setLocationField(form, 'destination', trip!.destination, trip!.destinationCoordinates);
-  renderTripAccessSettings();
   syncDateButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
   $<HTMLDialogElement>('#tp-trip-dialog').showModal();
-  if (showAccess) window.setTimeout(() => $('#tp-trip-access-settings').scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
 }
 
 function addBagRow(item?: BaggageItem): void {
@@ -1097,8 +1044,7 @@ function showTrip(result: TripResult & { session: TripSession }): void {
   trip = result.trip;
   const sessionPerson = result.trip.participants.find(person => person.id === result.session.participantId) ?? result.trip.participants[0];
   session = sessionPerson ? { tripId: result.trip.id, participantId: sessionPerson.id, displayName: sessionPerson.name } : result.session;
-  tripAccess = result.access ?? repository.getTripAccess(result.trip.id) ?? { mode: 'public-link', hasOwner: false, permissions: [], role: 'public', canView: true, canEdit: true, canManage: false };
-  canEdit = result.trip.id === 'demo' ? false : tripAccess.canEdit;
+  canEdit = result.trip.id !== 'demo';
   itineraryPersonId = '';
   $<HTMLDialogElement>('#tp-join-dialog').close();
   const readOnlyPill = $('#tp-read-only-pill');
@@ -1109,10 +1055,21 @@ function showTrip(result: TripResult & { session: TripSession }): void {
 
 function requestTripIdentity(loadedTrip: Trip): void {
   trip = loadedTrip;
-  if (loadedTrip.id === 'demo' || !canEdit) {
+  if (loadedTrip.id === 'demo') {
     showTrip({ trip: loadedTrip, session: { tripId: loadedTrip.id, participantId: '', displayName: 'Guest' } });
     return;
   }
+  const form = $<HTMLFormElement>('#tp-join-form');
+  const select = form.elements.namedItem('participantId') as HTMLSelectElement;
+  select.innerHTML = '<option value="">Choose your name</option>'
+    + loadedTrip.participants.map(person => `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name)}</option>`).join('')
+    + '<option value="__new__">I’m not listed</option>';
+  select.value = '';
+  const nameField = form.querySelector<HTMLElement>('[data-new-participant]')!;
+  const nameInput = form.elements.namedItem('name') as HTMLInputElement;
+  nameField.hidden = true;
+  nameInput.required = false;
+  nameInput.value = '';
   const dialog = $<HTMLDialogElement>('#tp-join-dialog');
   if (!dialog.open) dialog.showModal();
 }
@@ -1141,9 +1098,7 @@ export async function mountTripPlanner(): Promise<void> {
 
   if (page === 'home') {
     const setup = $('#tp-access-form') as HTMLFormElement;
-    account = await loadAccount();
     canEdit = true;
-    applyAccountDefaults();
     enhanceForms();
     renderSetupCalendar();
     setup.addEventListener('submit', async event => {
@@ -1176,7 +1131,6 @@ export async function mountTripPlanner(): Promise<void> {
   }
 
   const savedToken = root.dataset.tripId;
-  account = await loadAccount(savedToken);
   canEdit = true;
   enhanceForms();
 
@@ -1187,13 +1141,27 @@ export async function mountTripPlanner(): Promise<void> {
     const error = form.querySelector<HTMLElement>('[data-join-error]')!;
     error.hidden = true; button.disabled = true; button.textContent = 'Joining…';
     try {
-      if (!validateForm(form) || !trip) throw new Error('Enter your name to join the trip.');
-      showTrip(await repository.accessTrip({ tripId: trip.id, displayName: formValue(form, 'name') }));
+      if (!validateForm(form) || !trip) throw new Error('Choose your name or add it to join the trip.');
+      const participantId = formValue(form, 'participantId');
+      showTrip(await repository.accessTrip(participantId === '__new__'
+        ? { tripId: trip.id, displayName: formValue(form, 'name') }
+        : { tripId: trip.id, participantId }));
     } catch (caught) {
       if (caught instanceof RevisionConflictError && trip) trip = await repository.getTrip(trip.id);
       error.textContent = caught instanceof Error ? caught.message : 'Could not join the trip.';
       error.hidden = false;
-    } finally { button.disabled = false; button.textContent = 'Join trip'; }
+    } finally { button.disabled = false; button.textContent = 'Continue'; }
+  });
+
+  $<HTMLSelectElement>('#tp-join-form [name="participantId"]').addEventListener('change', event => {
+    const select = event.currentTarget as HTMLSelectElement;
+    const form = select.form!;
+    const nameField = form.querySelector<HTMLElement>('[data-new-participant]')!;
+    const nameInput = form.elements.namedItem('name') as HTMLInputElement;
+    const addingName = select.value === '__new__';
+    nameField.hidden = !addingName;
+    nameInput.required = addingName;
+    if (addingName) nameInput.focus(); else nameInput.value = '';
   });
 
   $('#tp-export').addEventListener('click', exportCurrentTrip);
@@ -1234,10 +1202,6 @@ export async function mountTripPlanner(): Promise<void> {
       showDemoReadOnlyMessage();
       return;
     }
-    if (target.closest('#tp-add-permission')) { addPermissionRow(); return; }
-    if (target.closest('#tp-save-access')) { void saveAccessSettings(); return; }
-    const removePermission = target.closest<HTMLButtonElement>('[data-remove-permission]');
-    if (removePermission) { removePermission.closest('.tp-permission-row')?.remove(); return; }
     const locationSuggestion = target.closest<HTMLButtonElement>('[data-location-suggestion]');
     if (locationSuggestion) {
       const result = JSON.parse(decodeURIComponent(locationSuggestion.dataset.locationSuggestion!)) as { location: string; latitude: number; longitude: number };
@@ -1269,7 +1233,6 @@ export async function mountTripPlanner(): Promise<void> {
     const selectTransport = target.closest<HTMLButtonElement>('[data-select-transport]'); if (selectTransport) { void mutate(() => repository.selectTransport(trip!.id, selectTransport.dataset.selectTransport!), 'Transport selection updated.'); return; }
     const activityVote = target.closest<HTMLButtonElement>('[data-activity-vote]'); if (activityVote) { void mutate(() => repository.voteForActivity(trip!.id, activityVote.dataset.activity!, session!.participantId, activityVote.dataset.activityVote as VoteValue), 'Vote saved.'); return; }
     const selectActivity = target.closest<HTMLButtonElement>('[data-select-activity]'); if (selectActivity) { void mutate(() => repository.selectActivity(trip!.id, selectActivity.dataset.selectActivity!), 'Itinerary updated.'); return; }
-    if (target.closest('[data-restrict-access]')) return openTripDialog(true);
     if (target.closest('#tp-edit-trip')) return openTripDialog();
     if (target.closest('#tp-add-person')) return openPersonDialog();
     if (target.closest('#tp-clear-transport-people')) {
@@ -1351,10 +1314,7 @@ export async function mountTripPlanner(): Promise<void> {
         $('#tp-content').innerHTML = '<section class="tp-loading-state tp-error-state"><h1>Trip not found</h1><p>This trip does not exist or the link is incomplete.</p><a class="tp-button tp-button-primary" href="' + appBase + '/">Create a trip</a></section>';
         return;
       }
-      tripAccess = result.access;
-      canEdit = result.access?.canEdit ?? true;
-      if (account?.tripSession) showTrip({ ...result, session: account.tripSession });
-      else if (result.session && canEdit) showTrip({ ...result, session: result.session });
+      if (result.session) showTrip({ ...result, session: result.session });
       else requestTripIdentity(result.trip);
     }).catch(() => {
       $('#tp-title').textContent = 'Could not load trip';

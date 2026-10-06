@@ -1,21 +1,8 @@
 import type { APIContext } from 'astro';
 import { env as cloudflareEnv } from 'cloudflare:workers';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { enforceRateLimit, getAccountSession } from './database';
+import { enforceRateLimit } from './database';
 
 const cookieName = 'trip_planner_session';
-export const localSignedOutCookieName = 'trip_planner_local_signed_out';
-
-export interface AuthenticatedUser {
-  email: string;
-  name: string;
-}
-
-interface CloudflareAccessContext {
-  getIdentity(): Promise<{ email?: string; name?: string }>;
-}
-
-const accessKeySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
@@ -68,45 +55,6 @@ export async function guardRequest(context: APIContext, limit?: number): Promise
     console.error(error);
     return json({ error: 'The service is not configured correctly.' }, 500);
   }
-}
-
-export async function accessUser(context: APIContext, env = environment(context)): Promise<AuthenticatedUser | undefined> {
-  if (import.meta.env.DEV && context.cookies.get(localSignedOutCookieName)?.value === '1') return undefined;
-  const cfContext = (context.locals as { cfContext?: { access?: CloudflareAccessContext } }).cfContext;
-  const identity = await cfContext?.access?.getIdentity();
-  if (identity?.email) return { email: identity.email.trim().toLowerCase(), name: identity.name?.trim() || identity.email.split('@')[0] };
-
-  const token = context.request.headers.get('cf-access-jwt-assertion');
-  const teamDomain = env.ACCESS_TEAM_DOMAIN?.replace(/\/$/, '');
-  if (!token || !teamDomain || !env.ACCESS_AUD) return undefined;
-  if (!teamDomain.startsWith('https://') || !new URL(teamDomain).hostname.endsWith('.cloudflareaccess.com')) return undefined;
-  try {
-    let keySet = accessKeySets.get(teamDomain);
-    if (!keySet) {
-      keySet = createRemoteJWKSet(new URL(`${teamDomain}/cdn-cgi/access/certs`));
-      accessKeySets.set(teamDomain, keySet);
-    }
-    const { payload } = await jwtVerify(token, keySet, { issuer: teamDomain, audience: env.ACCESS_AUD });
-    const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
-    if (!email) return undefined;
-    const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : email.split('@')[0];
-    return { email, name };
-  } catch (error) {
-    console.warn('Cloudflare Access JWT validation failed.', error instanceof Error ? error.message : error);
-    return undefined;
-  }
-}
-
-export async function guardWriteRequest(context: APIContext, limit?: number): Promise<{ env: CloudflareEnv; sessionId: string; user: AuthenticatedUser } | Response> {
-  const guarded = await guardRequest(context, limit);
-  if (guarded instanceof Response) return guarded;
-  const user = await authenticatedUser(context, guarded.env, guarded.sessionId);
-  if (!user) return json({ error: 'Sign in with Google or email to edit this trip.' }, 401);
-  return { ...guarded, user };
-}
-
-export async function authenticatedUser(context: APIContext, env: CloudflareEnv, sessionId: string): Promise<AuthenticatedUser | undefined> {
-  return await accessUser(context, env) ?? await getAccountSession(env.DB, sessionId);
 }
 
 export function json(body: unknown, status = 200, headers?: HeadersInit): Response {

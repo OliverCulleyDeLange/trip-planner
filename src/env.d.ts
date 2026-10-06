@@ -21,8 +21,6 @@ interface CloudflareEnv {
   DB: D1Database;
   COOKIE_SIGNING_SECRET: string;
   GEOAPIFY_API_KEY: string;
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUD?: string;
 }
 
 declare module 'cloudflare:workers' {

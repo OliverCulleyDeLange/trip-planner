@@ -22,6 +22,22 @@ describe('trip model', () => {
     expect(joined.trip.participants.map(person => person.name)).toEqual(['Oliver', 'Alex']);
   });
 
+  it('joins as a traveller the owner already added', () => {
+    const created = createTrip(request);
+    const alex = { ...created.trip.participants[0], id: 'person-alex', name: 'Alex' };
+    created.trip.participants.push(alex);
+
+    const joined = joinTrip(created.trip, '', alex.id);
+
+    expect(joined.session).toMatchObject({ participantId: alex.id, displayName: 'Alex' });
+    expect(joined.trip.participants).toHaveLength(2);
+  });
+
+  it('rejects an existing traveller choice that is no longer on the trip', () => {
+    const created = createTrip(request);
+    expect(() => joinTrip(created.trip, '', 'person-missing')).toThrow('That traveller is no longer on this trip.');
+  });
+
   it('applies mutations without discarding unrelated records', () => {
     const { trip } = createTrip(request);
     applyMutation(trip, { operation: 'setAvailability', payload: { participantId: trip.participants[0].id, date: '2027-01-10', slot: 'all-day', status: 'available' } });

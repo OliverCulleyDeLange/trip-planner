@@ -176,23 +176,10 @@ export interface TripExport {
   trip: Trip;
 }
 
-export interface TripAccessRequest {
+export interface JoinTripRequest {
   tripId: string;
-  displayName: string;
-}
-
-export type TripAccessMode = 'public-link' | 'restricted';
-export type TripPermissionRole = 'viewer' | 'editor';
-export interface TripPermission { email: string; role: TripPermissionRole }
-export interface TripAccessState {
-  mode: TripAccessMode;
-  hasOwner: boolean;
-  ownerEmail?: string;
-  permissions: TripPermission[];
-  role: 'owner' | TripPermissionRole | 'public';
-  canView: boolean;
-  canEdit: boolean;
-  canManage: boolean;
+  participantId?: Id;
+  displayName?: string;
 }
 
 export interface CreateTripRequest {
@@ -207,7 +194,7 @@ export interface TripRepository {
   createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }>;
   importTrip(exported: TripExport): Promise<{ trip: Trip; session: TripSession }>;
   restoreTrip(tripId: string): Promise<{ trip: Trip; session?: TripSession } | undefined>;
-  accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }>;
+  accessTrip(request: JoinTripRequest): Promise<{ trip: Trip; session: TripSession }>;
   getTrip(tripId: Id): Promise<Trip>;
   updateTrip(tripId: Id, patch: Pick<Trip, 'title' | 'destination' | 'destinationCoordinates' | 'dateRange' | 'availabilityWindow'>): Promise<Trip>;
   saveAvailabilityRange(tripId: Id, range: { id: Id; start: string; end: string }): Promise<Trip>;

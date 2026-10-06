@@ -79,9 +79,12 @@ export function normalizeTrip(trip: Trip): Trip {
   return trip;
 }
 
-export function joinTrip(trip: Trip, displayName: string): { trip: Trip; session: TripSession } {
+export function joinTrip(trip: Trip, displayName = '', participantId?: string): { trip: Trip; session: TripSession } {
   const name = displayName.trim();
-  let person = trip.participants.find(candidate => candidate.name.toLowerCase() === name.toLowerCase());
+  let person = participantId
+    ? trip.participants.find(candidate => candidate.id === participantId)
+    : trip.participants.find(candidate => candidate.name.toLowerCase() === name.toLowerCase());
+  if (participantId && !person) throw new Error('That traveller is no longer on this trip. Choose another name.');
   if (!person) {
     person = newParticipant(name, trip.participants.length);
     trip.participants.push(person);

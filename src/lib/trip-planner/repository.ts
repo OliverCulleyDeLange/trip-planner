@@ -1,6 +1,6 @@
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, CreateTripRequest, Id, Participant,
-  TransportOption, Trip, TripAccessRequest, TripExport, TripRepository, TripSession, VoteValue,
+  TransportOption, Trip, JoinTripRequest, TripExport, TripRepository, TripSession, VoteValue,
 } from './types';
 
 const clone = <T>(value: T): T => structuredClone(value);
@@ -138,7 +138,7 @@ export class LocalTripRepository implements TripRepository {
     return { trip: clone(storedTrip), session: clone(storedSession) };
   }
 
-  async accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }> {
+  async accessTrip(request: JoinTripRequest): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
     let trip = this.trips.get(request.tripId);
     if (!trip) {
@@ -148,9 +148,11 @@ export class LocalTripRepository implements TripRepository {
     }
     if (!trip) throw new Error('This trip is not stored in this browser.');
     normalizeTrip(trip);
-    const name = request.displayName.trim();
-    if (!name) throw new Error('Enter your name to join the trip.');
-    let person = trip.participants.find(candidate => candidate.name.toLowerCase() === name.toLowerCase());
+    const name = request.displayName?.trim() ?? '';
+    let person = request.participantId
+      ? trip.participants.find(candidate => candidate.id === request.participantId)
+      : trip.participants.find(candidate => candidate.name.toLowerCase() === name.toLowerCase());
+    if (request.participantId && !person) throw new Error('That traveller is no longer on this trip. Choose another name.');
     if (!person) {
       person = this.newParticipant(`person-${crypto.randomUUID()}`, name, trip.participants.length);
       trip.participants.push(person);

@@ -1,9 +1,9 @@
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, CreateTripRequest, Id, Participant,
-  TransportOption, Trip, TripAccessRequest, TripAccessMode, TripAccessState, TripExport, TripPermission, TripRepository, TripSession, VoteValue,
+  TransportOption, Trip, JoinTripRequest, TripExport, TripRepository, TripSession, VoteValue,
 } from './types';
 
-export type TripResult = { trip: Trip; session?: TripSession; access?: TripAccessState };
+export type TripResult = { trip: Trip; session?: TripSession };
 
 export class RevisionConflictError extends Error {
   constructor() {
@@ -16,7 +16,6 @@ const apiBase = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 export class ApiTripRepository implements TripRepository {
   private readonly trips = new Map<Id, Trip>();
-  private readonly access = new Map<Id, TripAccessState>();
 
   async createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }> {
     return this.storeResult(await this.request<TripResult>('/trips', { method: 'POST', body: JSON.stringify({ kind: 'create', request }) })) as { trip: Trip; session: TripSession };
@@ -32,9 +31,9 @@ export class ApiTripRepository implements TripRepository {
     return this.storeResult(await this.parse<TripResult>(response));
   }
 
-  async accessTrip(request: TripAccessRequest): Promise<{ trip: Trip; session: TripSession }> {
+  async accessTrip(request: JoinTripRequest): Promise<{ trip: Trip; session: TripSession }> {
     const result = await this.request<TripResult>(`/trips/${encodeURIComponent(request.tripId)}/join`, {
-      method: 'POST', body: JSON.stringify({ displayName: request.displayName, expectedRevision: this.requireTrip(request.tripId).revision }),
+      method: 'POST', body: JSON.stringify({ participantId: request.participantId, displayName: request.displayName, expectedRevision: this.requireTrip(request.tripId).revision }),
     }, request.tripId);
     return this.storeResult(result) as { trip: Trip; session: TripSession };
   }
@@ -42,16 +41,6 @@ export class ApiTripRepository implements TripRepository {
   async getTrip(tripId: Id): Promise<Trip> {
     const result = await this.request<TripResult>(`/trips/${encodeURIComponent(tripId)}`);
     return this.storeResult(result).trip;
-  }
-
-  getTripAccess(tripId: Id): TripAccessState | undefined { return structuredClone(this.access.get(tripId)); }
-
-  async saveTripAccess(tripId: Id, mode: TripAccessMode, permissions: TripPermission[]): Promise<TripAccessState> {
-    const result = await this.request<{ access: TripAccessState }>(`/trips/${encodeURIComponent(tripId)}/access`, {
-      method: 'POST', body: JSON.stringify({ mode, permissions }),
-    });
-    this.access.set(tripId, structuredClone(result.access));
-    return structuredClone(result.access);
   }
 
   updateTrip(tripId: Id, patch: Pick<Trip, 'title' | 'destination' | 'destinationCoordinates' | 'dateRange' | 'availabilityWindow'>): Promise<Trip> {
@@ -104,7 +93,6 @@ export class ApiTripRepository implements TripRepository {
 
   private storeResult(result: TripResult): TripResult {
     this.trips.set(result.trip.id, structuredClone(result.trip));
-    if (result.access) this.access.set(result.trip.id, structuredClone(result.access));
     return structuredClone(result);
   }
 

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
-import { getTripAccess, loadTrip, updateTrip } from '../../../../lib/server/database';
+import { loadTrip, updateTrip } from '../../../../lib/server/database';
 import { applyMutation, type TripMutation } from '../../../../lib/server/trips';
-import { authenticatedUser, guardRequest, json, jsonBody, validTripId } from '../../../../lib/server/request';
+import { guardRequest, json, jsonBody, validTripId } from '../../../../lib/server/request';
 
 export const prerender = false;
 
@@ -12,9 +12,6 @@ export const POST: APIRoute = async context => {
   if (!validTripId(tripId)) return json({ error: 'Trip not found.' }, 404);
   if (tripId === 'demo') return json({ error: 'The demo trip can’t be edited.' }, 403);
   try {
-    const user = await authenticatedUser(context, guarded.env, guarded.sessionId);
-    const access = await getTripAccess(guarded.env.DB, tripId, user?.email);
-    if (!access.canEdit) return json({ error: user ? 'You only have view access to this trip.' : 'Sign in with an editor invitation to change this trip.' }, 403);
     const body = await jsonBody<TripMutation & { expectedRevision: number }>(context.request);
     const current = await loadTrip(guarded.env.DB, tripId);
     if (!current) return json({ error: 'Trip not found.' }, 404);
@@ -22,7 +19,7 @@ export const POST: APIRoute = async context => {
     const changed = applyMutation(structuredClone(current), body);
     const saved = await updateTrip(guarded.env.DB, changed, body.expectedRevision);
     if (!saved) return json({ trip: await loadTrip(guarded.env.DB, tripId) }, 409);
-    return json({ trip: saved, access });
+    return json({ trip: saved });
   } catch (error) {
     console.error(error);
     return json({ error: error instanceof Error ? error.message : 'Could not save the change.' }, 400);

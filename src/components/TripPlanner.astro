@@ -87,20 +87,6 @@ const { page, tripId } = Astro.props;
         <div class="tp-form-grid">
           <label><span>Trip name</span><input name="title" required /></label><label class="tp-location-field"><span>Destination</span><input name="destination" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input required /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
         </div>
-        <section class="tp-trip-access-settings" id="tp-trip-access-settings">
-          <div><p class="tp-eyebrow">Visibility</p><h3>Who can access this trip?</h3></div>
-          <p id="tp-trip-access-summary"></p>
-          <div id="tp-trip-access-manager" hidden>
-            <div class="tp-access-choice">
-              <label><input type="radio" name="accessMode" value="public-link" /> <span><strong>Anyone with the link</strong><small>Anyone can view and edit without signing in.</small></span></label>
-              <label><input type="radio" name="accessMode" value="restricted" /> <span><strong>Invited accounts only</strong><small>Only the email addresses below can view or edit.</small></span></label>
-            </div>
-            <div class="tp-permission-list" id="tp-permission-list"></div>
-            <button class="tp-text-button" id="tp-add-permission" type="button">+ Add email address</button>
-            <p class="tp-form-error" id="tp-access-settings-error" role="alert" hidden></p>
-            <button class="tp-button tp-button-primary" id="tp-save-access" type="button">Save access</button>
-          </div>
-        </section>
         <div class="tp-dialog-actions"><button class="tp-button tp-button-quiet" type="button" data-close-dialog>Cancel</button><button class="tp-button tp-button-primary" type="submit">Save trip</button></div>
       </form>
     </dialog>
@@ -230,12 +216,15 @@ const { page, tripId } = Astro.props;
       <div class="tp-picker-actions"><button class="tp-text-button" type="button" id="tp-picker-clear">Clear date</button><button class="tp-button tp-button-quiet" type="button" id="tp-picker-cancel">Cancel</button></div>
     </dialog>
 
-    <dialog class="tp-dialog" id="tp-join-dialog">
+    <dialog class="tp-dialog tp-small-dialog" id="tp-join-dialog">
       <form class="tp-dialog-form" id="tp-join-form">
-        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared trip</p><h2>Join this trip</h2><p>Enter your name so votes and availability are attributed to you. No account is required.</p></div></div>
-        <div class="tp-form-grid"><label class="tp-wide-field"><span>Your name</span><input name="name" autocomplete="name" maxlength="80" required /></label></div>
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared trip</p><h2>Who are you?</h2><p>The trip owner may have already added you. Choose your name below, or add it if you are not listed.</p></div></div>
+        <div class="tp-form-grid tp-join-fields">
+          <label class="tp-wide-field"><span>Your name</span><select name="participantId" required><option value="">Choose your name</option></select></label>
+          <label class="tp-wide-field" data-new-participant hidden><span>Add your name</span><input name="name" autocomplete="name" maxlength="80" /></label>
+        </div>
         <p class="tp-form-error" data-join-error role="alert" hidden></p>
-        <div class="tp-dialog-actions"><button class="tp-button tp-button-primary" type="submit">Join trip</button></div>
+        <div class="tp-dialog-actions"><button class="tp-button tp-button-primary" type="submit">Continue</button></div>
       </form>
     </dialog>
 
