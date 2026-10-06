@@ -10,7 +10,7 @@ export type TripMutation = { operation: string; payload: unknown };
 
 export function newTripId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return `trip_${btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')}`;
+  return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
 export function newParticipant(name: string, index: number, id = `person-${crypto.randomUUID()}`): Participant {
@@ -138,7 +138,7 @@ export function applyMutation(trip: Trip, mutation: TripMutation): Trip {
     case 'setRangeAvailability': {
       const entry = payload as unknown as { participantId: string; start: string; end: string; status: AvailabilityStatus };
       trip.availability = trip.availability.filter(candidate => candidate.participantId !== entry.participantId || candidate.date < entry.start || candidate.date > entry.end);
-      if (entry.status === 'available') trip.availability.push({ participantId: entry.participantId, date: entry.start, slot: 'all-day', status: entry.status });
+      trip.availability.push({ participantId: entry.participantId, date: entry.start, slot: 'all-day', status: entry.status });
       break;
     }
     case 'saveTransportOption': upsert(trip.transportOptions, mutation.payload as TransportOption); break;

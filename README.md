@@ -7,11 +7,11 @@ Production: <https://trip-scheduler.oliver-trip-planner.workers.dev>
 ## Architecture
 
 - Astro 6 application and API routes on Cloudflare Workers
-- Separate production and preview D1 databases
+- A production D1 database plus a separate local database for development
 - Relational D1 tables for trips, participants, date options, availability, transport, accommodation, activities and anonymous browser sessions
 - Optimistic revision checks reject stale writes with HTTP `409`
-- Signed `HttpOnly`, `Secure`, `SameSite=Lax` browser-session cookies remember each browser's selected traveller and support rate limiting
-- A seeded, publicly viewable `demo` trip is read-only; regenerate its migration after changing demo data with `pnpm db:generate-demo`
+- Signed `HttpOnly`, `Secure`, `SameSite=Lax` browser-session cookies remember each browser's selected traveller
+- A seeded, publicly viewable `demo` trip is read-only; regenerate its migration after changing demo data with `pnpm db:generate-schema`
 - Geoapify requests are proxied by the Worker; its API key is never shipped to browser JavaScript
 - Versioned JSON export/import remains available as a user-controlled backup
 
@@ -41,21 +41,18 @@ Create migrations in `migrations/` and commit them with the application change. 
 
 ```sh
 pnpm db:migrate:local
-pnpm db:migrate:preview
 pnpm db:migrate:production
 ```
 
-Preview and production use different D1 database IDs in `wrangler.jsonc`. The Cloudflare account ID is pinned there so commands cannot silently target another account.
+The production D1 database ID and Cloudflare account ID are pinned in `wrangler.jsonc` so commands cannot silently target another account or database.
 
 ## Secrets
 
-Production and preview each require `COOKIE_SIGNING_SECRET` and `GEOAPIFY_API_KEY`:
+Production requires `COOKIE_SIGNING_SECRET` and `GEOAPIFY_API_KEY`:
 
 ```sh
 pnpm wrangler secret put COOKIE_SIGNING_SECRET --env=""
 pnpm wrangler secret put GEOAPIFY_API_KEY --env=""
-pnpm wrangler secret put COOKIE_SIGNING_SECRET --env preview
-pnpm wrangler secret put GEOAPIFY_API_KEY --env preview
 ```
 
 Never use a `PUBLIC_` variable for the Geoapify key.
@@ -65,11 +62,10 @@ Never use a `PUBLIC_` variable for the Geoapify key.
 Manual deployments:
 
 ```sh
-pnpm deploy:preview
 pnpm deploy:production
 ```
 
-`.github/workflows/ci.yml` checks every pull request, deploys pull requests to the preview Worker, and deploys `main` to production. Add a narrowly scoped `CLOUDFLARE_API_TOKEN` to the GitHub preview and production environments before enabling automatic deploys.
+`.github/workflows/ci.yml` checks every pull request and deploys `main` to production. Add a narrowly scoped `CLOUDFLARE_API_TOKEN` to the GitHub production environment before enabling automatic deploys.
 
 ## Recovery
 

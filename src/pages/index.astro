@@ -2,7 +2,7 @@
 import TripPlanner from '../components/TripPlanner.astro';
 const legacyTripId = Astro.url.searchParams.get('trip');
 if (legacyTripId) {
-  const normalizedTripId = legacyTripId === 'trip_demo0000000000000000000000000000' ? 'demo' : legacyTripId;
+  const normalizedTripId = legacyTripId;
   return Astro.redirect(`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}trips/${encodeURIComponent(normalizedTripId)}`, 308);
 }
 ---

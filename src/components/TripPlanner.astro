@@ -59,6 +59,7 @@ const { page, tripId } = Astro.props;
           <span class="tp-saving" id="tp-saving" aria-live="polite"></span>
           <span class="tp-read-only-pill" id="tp-read-only-pill" hidden>View only</span>
           <button class="tp-button tp-button-quiet tp-mobile-hide" id="tp-share" type="button">Copy trip link</button>
+          <button class="tp-user-button" id="tp-user-button" type="button" aria-label="Change who you are" title="Change who you are"><span id="tp-user-avatar" aria-hidden="true">?</span></button>
           <details class="tp-settings-menu" id="tp-settings-menu">
             <summary class="tp-settings-button" aria-label="Trip settings" title="Trip settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary>
             <div class="tp-settings-popover">
@@ -218,13 +219,36 @@ const { page, tripId } = Astro.props;
 
     <dialog class="tp-dialog tp-small-dialog" id="tp-join-dialog">
       <form class="tp-dialog-form" id="tp-join-form">
-        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared trip</p><h2>Who are you?</h2><p>The trip owner may have already added you. Choose your name below, or add it if you are not listed.</p></div></div>
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Shared trip</p><h2>Who are you?</h2><p>Tell us how you’re joining so we can give you the right experience.</p></div></div>
+        <fieldset class="tp-role-choice">
+          <legend>Your role</legend>
+          <div>
+            <label><input type="radio" name="role" value="organiser" /><span><b>Organiser</b><small>Plan and manage the whole trip</small></span></label>
+            <label><input type="radio" name="role" value="participant" /><span><b>Participant</b><small>Check your details and answer the polls</small></span></label>
+          </div>
+        </fieldset>
         <div class="tp-form-grid tp-join-fields">
           <label class="tp-wide-field"><span>Your name</span><select name="participantId" required><option value="">Choose your name</option></select></label>
           <label class="tp-wide-field" data-new-participant hidden><span>Add your name</span><input name="name" autocomplete="name" maxlength="80" /></label>
         </div>
         <p class="tp-form-error" data-join-error role="alert" hidden></p>
         <div class="tp-dialog-actions"><button class="tp-button tp-button-primary" type="submit">Continue</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="tp-dialog tp-onboarding-dialog" id="tp-onboarding-dialog">
+      <form id="tp-onboarding-form" novalidate>
+        <header class="tp-onboarding-head">
+          <div><p class="tp-eyebrow">Participant setup</p><h2 id="tp-onboarding-title">Let’s get you ready</h2></div>
+          <span id="tp-onboarding-count" aria-live="polite"></span>
+        </header>
+        <div class="tp-onboarding-progress" id="tp-onboarding-progress" aria-hidden="true"></div>
+        <div class="tp-onboarding-body" id="tp-onboarding-body"></div>
+        <p class="tp-form-error" id="tp-onboarding-error" role="alert" hidden></p>
+        <div class="tp-dialog-actions tp-onboarding-actions">
+          <button class="tp-button tp-button-quiet" id="tp-onboarding-back" type="button">Back</button>
+          <button class="tp-button tp-button-primary" id="tp-onboarding-next" type="submit">Continue</button>
+        </div>
       </form>
     </dialog>
 

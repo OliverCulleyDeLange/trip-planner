@@ -11,7 +11,7 @@ type CreateBody =
   | { kind: 'import'; exported: TripExport };
 
 export const POST: APIRoute = async context => {
-  const guarded = await guardRequest(context, 30);
+  const guarded = await guardRequest(context);
   if (guarded instanceof Response) return guarded;
   try {
     const body = await jsonBody<CreateBody>(context.request);

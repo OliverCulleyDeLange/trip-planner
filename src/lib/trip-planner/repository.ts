@@ -74,7 +74,7 @@ export class LocalTripRepository implements TripRepository {
   async createTrip(request: CreateTripRequest): Promise<{ trip: Trip; session: TripSession }> {
     await pause();
     if (!request.availabilityRanges.length) throw new Error('Select at least one potential date range.');
-    const id = `trip_${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
+    const id = crypto.randomUUID().replaceAll('-', '');
     const participantId = `person-${crypto.randomUUID()}`;
     const person = this.newParticipant(participantId, request.displayName, 0);
     const availabilityRanges = request.availabilityRanges

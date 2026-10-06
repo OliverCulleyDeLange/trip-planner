@@ -5,12 +5,18 @@ import type {
 } from '../../lib/trip-planner/types';
 
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
+type AppMode = 'organiser' | 'participant';
+type OnboardingStep = 'details' | 'availability' | 'transport' | 'stays' | 'activities' | 'complete';
 const repository = new ApiTripRepository();
 const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 const tripUrl = (tripId: string) => `${appBase}/trips/${encodeURIComponent(tripId)}`;
 let trip: Trip | undefined;
 let session: TripSession | undefined;
 let canEdit = false;
+let appMode: AppMode = 'organiser';
+let onboardingStepIndex = 0;
+let onboardingSteps: OnboardingStep[] = [];
+let resumeOnboardingAfterPersonSave = false;
 let activeView: View = 'overview';
 let itineraryPersonId = '';
 let itineraryLayout: 'list' | 'calendar' = localStorage.getItem('trip-planner:itinerary-layout') === 'calendar' ? 'calendar' : 'list';
@@ -60,6 +66,12 @@ const demoEditSelector = [
   '[data-edit-person]', '[data-remove-person]', '[data-edit-range]', '[data-remove-range]', '[data-prefer-range]', '[data-edit-transport]', '[data-remove-transport]',
   '[data-edit-stay]', '[data-remove-stay]', '[data-edit-activity]', '[data-remove-activity]', '[data-select-stay]', '[data-select-transport]', '[data-select-activity]',
   '[data-range-start]', '[data-date]', '[data-vote]', '[data-transport-vote]', '[data-activity-vote]', '.tp-completion button',
+].join(', ');
+const participantOrganiserSelector = [
+  '#tp-edit-trip', '#tp-add-person', '#tp-add-range', '#tp-add-transport', '[data-add-transport]', '#tp-add-stay', '#tp-add-activity',
+  '[data-edit-person]', '[data-remove-person]', '[data-edit-range]', '[data-remove-range]', '[data-prefer-range]', '[data-edit-transport]', '[data-remove-transport]',
+  '[data-edit-stay]', '[data-remove-stay]', '[data-edit-activity]', '[data-remove-activity]', '[data-select-stay]', '[data-select-transport]', '[data-select-activity]',
+  '[data-copy-participant-link]', '.tp-completion button',
 ].join(', ');
 
 function coordinatesFromForm(data: FormData, name: string): GeoCoordinates | undefined {
@@ -348,7 +360,7 @@ function renderAddressMap(people: Participant[]): string {
 function renderOverview(): string {
   const people = trip!.participants;
   if (itineraryPersonId && !people.some(person => person.id === itineraryPersonId)) itineraryPersonId = '';
-  const availabilityDone = people.filter(person => trip!.availability.some(entry => entry.participantId === person.id && entry.status === 'available')).length;
+  const availabilityDone = people.filter(person => trip!.availability.some(entry => entry.participantId === person.id)).length;
   const isItineraryChoice = (status: TransportOption['status']) => status === 'selected' || status === 'booked';
   const isBooked = (option: { status: TransportOption['status']; bookingReference?: string }) => option.status === 'booked' || Boolean(option.bookingReference?.trim());
   const selectedTransport = trip!.transportOptions.filter(option => isItineraryChoice(option.status));
@@ -547,7 +559,7 @@ function renderPeople(): string {
       ...(selectedPeople.length ? [`share with ${selectedPeople.join(', ')}`] : []),
       ...(linkedPartner ? [`partner: ${linkedPartner.name}`] : []),
     ].filter(Boolean).join('; ') || 'Not specified';
-    return `<article class="tp-person-card"><div class="tp-person-title">${avatar(person)}<div class="tp-card-actions"><button class="tp-action-button tp-action-edit" type="button" data-edit-person="${person.id}">Edit</button>${people.length > 1 ? `<button class="tp-action-button tp-action-delete" type="button" data-remove-person="${person.id}">Delete</button>` : ''}</div></div><dl><div><dt>Address</dt><dd>${escapeHtml(person.origin || 'Not set')}</dd></div><div><dt>Room preference</dt><dd>${escapeHtml(roomPreference)}</dd></div><div><dt>Bed preference</dt><dd>${escapeHtml(bedPreference)}</dd></div></dl><div class="tp-bag-chips">${person.baggage.length ? person.baggage.map(item => `<span>${escapeHtml(item.label)}${item.weightKg ? ` · ${item.weightKg} kg` : ''}${item.lengthCm ? ` · ${[item.lengthCm, item.widthCm, item.heightCm].filter(Boolean).join('×')} cm` : ''}</span>`).join('') : '<span class="is-empty">No bags added</span>'}</div></article>`;
+    return `<article class="tp-person-card"><div class="tp-person-title">${avatar(person)}</div><dl><div><dt>Address</dt><dd>${escapeHtml(person.origin || 'Not set')}</dd></div><div><dt>Room preference</dt><dd>${escapeHtml(roomPreference)}</dd></div><div><dt>Bed preference</dt><dd>${escapeHtml(bedPreference)}</dd></div></dl><div class="tp-bag-chips">${person.baggage.length ? person.baggage.map(item => `<span>${escapeHtml(item.label)}${item.weightKg ? ` · ${item.weightKg} kg` : ''}${item.lengthCm ? ` · ${[item.lengthCm, item.widthCm, item.heightCm].filter(Boolean).join('×')} cm` : ''}</span>`).join('') : '<span class="is-empty">No bags added</span>'}</div><div class="tp-card-actions">${trip!.id === 'demo' ? '' : `<button class="tp-action-button" type="button" data-copy-participant-link="${person.id}">Copy link</button>`}<button class="tp-action-button tp-action-edit" type="button" data-edit-person="${person.id}">Edit</button>${people.length > 1 ? `<button class="tp-action-button tp-action-delete" type="button" data-remove-person="${person.id}">Delete</button>` : ''}</div></article>`;
   };
   const groupHeading = (label: string, count: number) => `<div class="tp-people-group-title"><h2>${label}</h2><span>${count}</span></div>`;
   const couplesGroup = couples.length ? `<section class="tp-people-group">${groupHeading('Couples', couples.length)}<div class="tp-couples-grid">${couples.map(([first, second]) => `<div class="tp-couple-card">${personCard(first)}<span class="tp-couple-heart" aria-label="Couple">♥</span>${personCard(second)}</div>`).join('')}</div></section>` : '';
@@ -571,13 +583,13 @@ function renderAvailability(): string {
   if (trip!.availabilityRanges.length > 1) {
     const rangeAvailable = (participantId: string, start: string, end: string) => trip!.availability.some(entry => entry.participantId === participantId && entry.status === 'available' && entry.date >= start && entry.date <= end);
     const options = trip!.availabilityRanges;
-    const poll = `<section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-range-poll" style="--options:${options.length + 1}"><div class="tp-calendar-corner">Traveller</div>${options.map((candidate, index) => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => rangeAvailable(person.id, candidate.start, candidate.end)); return `<div class="tp-range-option ${everyone ? 'all-available' : ''}"><small>Option ${index + 1}</small><div class="tp-option-dates"><time><span>Start</span><strong>${date(candidate.start, { day: 'numeric', month: 'short' })}</strong></time><i>→</i><time><span>End</span><strong>${date(candidate.end, { day: 'numeric', month: 'short' })}</strong></time></div>${everyone ? '<b>Everyone ✓</b>' : ''}${rangeEditControls(candidate, true)}</div>`; }).join('')}<div class="tp-calendar-add-option"><button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div>${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${options.map(candidate => { const available = rangeAvailable(person.id, candidate.start, candidate.end); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-range-start="${candidate.start}" data-range-end="${candidate.end}" data-person="${person.id}" aria-label="${escapeHtml(person.name)}: ${date(candidate.start)} to ${date(candidate.end)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}<div class="tp-calendar-spacer"></div>`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div>${options.map(candidate => `<div class="tp-range-lock-cell">${rangeLockControl(candidate)}</div>`).join('')}<div class="tp-calendar-spacer"></div></div></div></section>`;
+    const poll = `<section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-range-poll" style="--options:${options.length + 1}"><div class="tp-calendar-corner">Traveller</div>${options.map((candidate, index) => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => rangeAvailable(person.id, candidate.start, candidate.end)); return `<div class="tp-range-option ${everyone ? 'all-available' : ''}"><small>Option ${index + 1}</small><div class="tp-option-dates"><time><span>Start</span><strong>${date(candidate.start, { day: 'numeric', month: 'short' })}</strong></time><i>→</i><time><span>End</span><strong>${date(candidate.end, { day: 'numeric', month: 'short' })}</strong></time></div>${everyone ? '<b>Everyone ✓</b>' : ''}${rangeEditControls(candidate, true)}</div>`; }).join('')}<div class="tp-calendar-add-option"><button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div>${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${options.map(candidate => { const available = rangeAvailable(person.id, candidate.start, candidate.end); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-range-start="${candidate.start}" data-range-end="${candidate.end}" data-person="${person.id}" aria-label="${escapeHtml(person.name)}: ${date(candidate.start)} to ${date(candidate.end)} — ${available ? 'available' : 'not available'}" ${appMode === 'participant' && person.id !== session!.participantId ? 'disabled' : ''}><span>${available ? '✓' : ''}</span></button>`; }).join('')}<div class="tp-calendar-spacer"></div>`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div>${options.map(candidate => `<div class="tp-range-lock-cell">${rangeLockControl(candidate)}</div>`).join('')}<div class="tp-calendar-spacer"></div></div></div></section>`;
     return `${sectionHeading('', 'Availability', '')}${poll}`;
   }
   const calendars = trip!.availabilityRanges.map((candidate, rangeIndex) => {
     const candidateDays = range(candidate.start, candidate.end);
     const preferred = trip!.preferredDateRange?.start === candidate.start && trip!.preferredDateRange?.end === candidate.end;
-    return `<section class="tp-range-section"><div class="tp-range-head"><div><p class="tp-eyebrow">Option ${rangeIndex + 1}${preferred ? ' · Locked in' : ''}</p><h2>${date(candidate.start, { day: 'numeric', month: 'long' })}–${date(candidate.end, { day: 'numeric', month: 'long', year: 'numeric' })}</h2></div><div>${rangeEditControls(candidate, trip!.availabilityRanges.length > 1)}<button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div></div><section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-calendar" style="--days:${candidateDays.length}"><div class="tp-calendar-corner">Traveller</div>${candidateDays.map(day => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => isAvailable(person.id, day)); return `<div class="tp-day-head ${everyone ? 'all-available' : ''}"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric' })}</strong>${everyone ? '<b>Everyone ✓</b>' : ''}</div>`; }).join('')}${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${candidateDays.map(day => { const available = isAvailable(person.id, day); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-date="${day}" data-person="${person.id}" data-slot="all-day" aria-label="${escapeHtml(person.name)}: ${date(day)} — ${available ? 'available' : 'not available'}"><span>${available ? '✓' : ''}</span></button>`; }).join('')}`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div><div class="tp-calendar-row-tail" style="grid-column: span ${candidateDays.length}"></div></div></div><div class="tp-range-footer">${rangeLockControl(candidate)}</div></section></section>`;
+    return `<section class="tp-range-section"><div class="tp-range-head"><div><p class="tp-eyebrow">Option ${rangeIndex + 1}${preferred ? ' · Locked in' : ''}</p><h2>${date(candidate.start, { day: 'numeric', month: 'long' })}–${date(candidate.end, { day: 'numeric', month: 'long', year: 'numeric' })}</h2></div><div>${rangeEditControls(candidate, trip!.availabilityRanges.length > 1)}<button class="tp-button tp-button-quiet" id="tp-add-range">+ Add date range</button></div></div><section class="tp-panel tp-calendar-panel"><div class="tp-calendar-scroll"><div class="tp-calendar" style="--days:${candidateDays.length}"><div class="tp-calendar-corner">Traveller</div>${candidateDays.map(day => { const everyone = trip!.participants.length > 0 && trip!.participants.every(person => isAvailable(person.id, day)); return `<div class="tp-day-head ${everyone ? 'all-available' : ''}"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric' })}</strong>${everyone ? '<b>Everyone ✓</b>' : ''}</div>`; }).join('')}${trip!.participants.map(person => `<div class="tp-calendar-person">${avatar(person)}</div>${candidateDays.map(day => { const available = isAvailable(person.id, day); return `<button class="tp-availability-cell tp-binary-cell ${available ? 'available' : 'unavailable'}" data-date="${day}" data-person="${person.id}" data-slot="all-day" aria-label="${escapeHtml(person.name)}: ${date(day)} — ${available ? 'available' : 'not available'}" ${appMode === 'participant' && person.id !== session!.participantId ? 'disabled' : ''}><span>${available ? '✓' : ''}</span></button>`; }).join('')}`).join('')}<div class="tp-calendar-person tp-calendar-add-person"><button id="tp-add-person">+ Add person</button></div><div class="tp-calendar-row-tail" style="grid-column: span ${candidateDays.length}"></div></div></div><div class="tp-range-footer">${rangeLockControl(candidate)}</div></section></section>`;
   }).join('');
   return `${sectionHeading('', 'Availability', '')}${calendars}`;
 }
@@ -764,6 +776,15 @@ function renderActivities(): string {
 function render(): void {
   if (!trip || !session) return;
   $('#tp-app').classList.toggle('tp-read-only', !canEdit && trip.id !== 'demo');
+  $('#tp-app').classList.toggle('tp-participant-mode', appMode === 'participant');
+  const currentPerson = trip.participants.find(person => person.id === session!.participantId);
+  const userButton = $<HTMLButtonElement>('#tp-user-button');
+  userButton.hidden = trip.id === 'demo';
+  userButton.title = currentPerson ? `Change identity · ${currentPerson.name}` : 'Change who you are';
+  userButton.setAttribute('aria-label', userButton.title);
+  const userAvatar = $('#tp-user-avatar');
+  userAvatar.textContent = currentPerson?.initials || session.displayName.slice(0, 1).toUpperCase() || '?';
+  userAvatar.style.setProperty('--person', currentPerson?.colour || '#dff1e7');
   $('#tp-title').textContent = trip.title;
   $('#tp-subtitle').textContent = `${date(trip.availabilityWindow.start)}–${date(trip.availabilityWindow.end, { day: 'numeric', month: 'short', year: 'numeric' })}`;
   const views: Record<View, () => string> = { overview: renderOverview, people: renderPeople, availability: renderAvailability, transport: renderTransport, stays: renderStays, activities: renderActivities };
@@ -989,6 +1010,11 @@ async function savePerson(form: HTMLFormElement): Promise<void> {
   const person: Participant = { id, name: String(data.get('name')).trim(), initials: String(data.get('name')).trim().slice(0, 1).toUpperCase(), colour: existing?.colour ?? colours[trip!.participants.length % colours.length], origin: String(data.get('origin')).trim(), originCoordinates, sex: String(data.get('sex')) as Participant['sex'], confirmed: existing?.confirmed ?? false, goWithFlow: false, sleepingPreferences: { ownRoom, ownBed: bedPreferences.includes('own-bed'), shareDoubleWithParticipantId: partnerId, acceptsSofaBed: false, roomPreferences, bedPreferences, shareWithParticipantIds }, baggage: bags };
   closeDialogs();
   await mutate(() => repository.saveParticipant(trip!.id, person), existing ? 'Person updated.' : 'Person added.');
+  if (resumeOnboardingAfterPersonSave) {
+    resumeOnboardingAfterPersonSave = false;
+    renderOnboarding();
+    $<HTMLDialogElement>('#tp-onboarding-dialog').showModal();
+  }
 }
 
 async function saveTransport(form: HTMLFormElement): Promise<void> {
@@ -1040,20 +1066,173 @@ async function saveActivity(form: HTMLFormElement): Promise<void> {
   closeDialogs(); await mutate(() => repository.saveActivityOption(trip!.id, option), 'Activity saved.');
 }
 
-function showTrip(result: TripResult & { session: TripSession }): void {
+function onboardingStorageKey(kind: 'mode' | 'complete'): string {
+  return `trip-planner:${kind}:${trip!.id}${kind === 'complete' ? `:${session!.participantId}` : ''}`;
+}
+
+function participantLink(participantId: string): string {
+  const url = new URL(tripUrl(trip!.id), location.origin);
+  url.searchParams.set('role', 'participant');
+  url.searchParams.set('participant', participantId);
+  return url.toString();
+}
+
+function removeIdentityParams(): void {
+  const url = new URL(location.href);
+  url.searchParams.delete('role');
+  url.searchParams.delete('participant');
+  history.replaceState(history.state, '', url);
+}
+
+function relevantParticipantOptions<T extends { participantIds?: string[] }>(options: T[]): T[] {
+  return options.filter(option => option.participantIds === undefined || option.participantIds.includes(session!.participantId));
+}
+
+function buildOnboardingSteps(): OnboardingStep[] {
+  const steps: OnboardingStep[] = ['details'];
+  if (trip!.availabilityRanges.length) steps.push('availability');
+  if (relevantParticipantOptions(trip!.transportOptions).length) steps.push('transport');
+  if (relevantParticipantOptions(trip!.accommodationOptions).length) steps.push('stays');
+  if (relevantParticipantOptions(trip!.activities).length) steps.push('activities');
+  steps.push('complete');
+  return steps;
+}
+
+function voteChoices(kind: 'transport' | 'stay' | 'activity', id: string, selected?: VoteValue): string {
+  return `<div class="tp-onboarding-votes" role="radiogroup" aria-label="Your vote">
+    ${([
+      ['first-choice', 'Love it', 'Best option'],
+      ['acceptable', 'Works', 'I’d be happy with this'],
+      ['unacceptable', 'No', 'This won’t work for me'],
+    ] as const).map(([value, label, help]) => `<label><input type="radio" name="vote:${kind}:${escapeHtml(id)}" value="${value}" ${selected === value ? 'checked' : ''} /><span><b>${label}</b><small>${help}</small></span></label>`).join('')}
+  </div>`;
+}
+
+function renderOnboarding(): void {
+  const step = onboardingSteps[onboardingStepIndex];
+  const person = trip!.participants.find(candidate => candidate.id === session!.participantId)!;
+  const body = $('#tp-onboarding-body');
+  const titles: Record<OnboardingStep, string> = {
+    details: 'Check your details', availability: 'When can you make it?', transport: 'Vote on transport', stays: 'Vote on places to stay', activities: 'Vote on activities', complete: 'You’re all caught up',
+  };
+  $('#tp-onboarding-title').textContent = titles[step];
+  $('#tp-onboarding-count').textContent = step === 'complete' ? 'Ready to go' : `Step ${onboardingStepIndex + 1} of ${onboardingSteps.length - 1}`;
+  $('#tp-onboarding-progress').innerHTML = onboardingSteps.slice(0, -1).map((_, index) => `<i class="${index <= onboardingStepIndex ? 'is-active' : ''}"></i>`).join('');
+  const error = $('#tp-onboarding-error'); error.hidden = true; error.textContent = '';
+
+  if (step === 'details') {
+    const room = person.sleepingPreferences.roomPreferences.includes('require-own') ? 'Need my own room' : person.sleepingPreferences.roomPreferences.includes('prefer-own') ? 'Prefer my own room' : 'Happy to share a room';
+    const bed = person.sleepingPreferences.bedPreferences.includes('own-bed') ? 'Own bed' : 'Happy to share a bed';
+    const baggage = person.baggage.length ? person.baggage.map(item => `${item.label}${item.weightKg ? ` (${item.weightKg} kg)` : ''}`).join(', ') : 'No bags added';
+    body.innerHTML = `<p class="tp-onboarding-intro">Make sure the organiser has everything they need for planning rooms and travel.</p>
+      <section class="tp-profile-review">
+        <div>${avatar(person)}<button class="tp-button tp-button-quiet" type="button" data-edit-onboarding-profile>Edit details</button></div>
+        <dl>
+          <div><dt>Address</dt><dd>${escapeHtml(person.origin || 'Not set')}</dd></div>
+          <div><dt>Room</dt><dd>${escapeHtml(room)}</dd></div>
+          <div><dt>Bed</dt><dd>${escapeHtml(bed)}</dd></div>
+          <div><dt>Bags</dt><dd>${escapeHtml(baggage)}</dd></div>
+        </dl>
+      </section>
+      <label class="tp-onboarding-confirm"><input type="checkbox" name="detailsConfirmed" ${person.confirmed ? 'checked' : ''} required /><span>I’ve checked these details and they’re correct</span></label>`;
+  } else if (step === 'availability') {
+    const ranges = trip!.availabilityRanges;
+    const availabilityOptions = ranges.length === 1
+      ? range(ranges[0].start, ranges[0].end).map(day => ({ key: `day:${day}`, legend: date(day, { weekday: 'long' }), title: date(day, { day: 'numeric', month: 'long', year: 'numeric' }), detail: '', available: statusFor(person.id, day, 'all-day') === 'available' }))
+      : ranges.map((candidate, index) => ({ key: `range:${candidate.id}`, legend: `Option ${index + 1}`, title: date(candidate.start, { weekday: 'short', day: 'numeric', month: 'long' }), detail: `to ${date(candidate.end, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}`, available: trip!.availability.some(entry => entry.participantId === person.id && entry.status === 'available' && entry.date >= candidate.start && entry.date <= candidate.end) }));
+    body.innerHTML = `<p class="tp-onboarding-intro">Answer for every ${ranges.length === 1 ? 'day' : 'date option'}. You can change these later from the Availability page.</p><div class="tp-onboarding-option-list">${availabilityOptions.map(option => `<fieldset class="tp-onboarding-option"><legend>${option.legend}</legend><div class="tp-onboarding-option-title"><strong>${option.title}</strong>${option.detail ? `<span>${option.detail}</span>` : ''}</div><div class="tp-onboarding-binary"><label><input type="radio" name="availability:${escapeHtml(option.key)}" value="available" ${option.available ? 'checked' : ''} /><span>✓ I can make it</span></label><label><input type="radio" name="availability:${escapeHtml(option.key)}" value="unavailable" /><span>× I can’t make it</span></label></div></fieldset>`).join('')}</div>`;
+  } else if (step === 'transport') {
+    const options = relevantParticipantOptions(trip!.transportOptions);
+    body.innerHTML = `<p class="tp-onboarding-intro">Tell the organiser which journeys assigned to you work for you.</p><div class="tp-onboarding-option-list">${options.map(option => `<fieldset class="tp-onboarding-option"><legend>${iconForMode[option.mode]} ${escapeHtml(option.mode)}</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.title)}</strong><span>${escapeHtml([option.origin, option.destination].filter(Boolean).join(' → ') || 'Route not added')}${option.pricePerPerson ? ` · ${money(option.pricePerPerson, option.currency)}` : ''}</span></div>${voteChoices('transport', option.id, option.votes[person.id])}</fieldset>`).join('')}</div>`;
+  } else if (step === 'stays') {
+    const options = relevantParticipantOptions(trip!.accommodationOptions);
+    body.innerHTML = `<p class="tp-onboarding-intro">Vote on each accommodation option that includes you.</p><div class="tp-onboarding-option-list">${options.map(option => `<fieldset class="tp-onboarding-option"><legend>Stay</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.name)}</strong><span>${escapeHtml(option.location || 'Location not added')}${option.priceTotal ? ` · ${money(option.priceTotal / Math.max(option.participantIds?.length || trip!.participants.length, 1), option.currency)} per person` : ''}</span></div>${voteChoices('stay', option.id, option.votes[person.id])}</fieldset>`).join('')}</div>`;
+  } else if (step === 'activities') {
+    const options = relevantParticipantOptions(trip!.activities);
+    body.innerHTML = `<p class="tp-onboarding-intro">Last poll: what would you like to do on the trip?</p><div class="tp-onboarding-option-list">${options.map(option => `<fieldset class="tp-onboarding-option"><legend>${escapeHtml(option.category || 'Activity')}</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.name)}</strong><span>${escapeHtml(option.location || option.notes || 'No extra details')}${option.costPerPerson ? ` · ${money(option.costPerPerson, option.currency)}` : ''}</span></div>${voteChoices('activity', option.id, option.votes[person.id])}</fieldset>`).join('')}</div>`;
+  } else {
+    body.innerHTML = `<section class="tp-onboarding-complete"><span aria-hidden="true">✓</span><h3>Thanks, ${escapeHtml(person.name)}!</h3><p>Your details and poll answers are saved. You can now explore the full trip and update your votes any time.</p></section>`;
+  }
+
+  const back = $<HTMLButtonElement>('#tp-onboarding-back');
+  const next = $<HTMLButtonElement>('#tp-onboarding-next');
+  back.hidden = onboardingStepIndex === 0 || step === 'complete';
+  next.textContent = step === 'complete' ? 'Enter trip' : 'Save and continue';
+}
+
+function startParticipantOnboarding(): void {
+  onboardingSteps = buildOnboardingSteps();
+  onboardingStepIndex = 0;
+  renderOnboarding();
+  const dialog = $<HTMLDialogElement>('#tp-onboarding-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
+async function saveOnboardingStep(form: HTMLFormElement): Promise<void> {
+  const step = onboardingSteps[onboardingStepIndex];
+  const data = new FormData(form);
+  const person = trip!.participants.find(candidate => candidate.id === session!.participantId)!;
+  const requireAnswers = (names: string[]) => {
+    const missing = names.some(name => !data.get(name));
+    if (missing) throw new Error('Choose an answer for every option before continuing.');
+  };
+
+  if (step === 'complete') {
+    localStorage.setItem(onboardingStorageKey('complete'), 'true');
+    $<HTMLDialogElement>('#tp-onboarding-dialog').close();
+    activeView = 'overview';
+    render();
+    showToast('Welcome to the trip.');
+    return;
+  }
+  if (step === 'details') {
+    if (!data.get('detailsConfirmed')) throw new Error('Confirm that you’ve checked your details.');
+    if (!person.confirmed) {
+      const confirmed = structuredClone(person); confirmed.confirmed = true;
+      trip = await repository.saveParticipant(trip!.id, confirmed);
+    }
+  }
+  if (step === 'availability') {
+    if (trip!.availabilityRanges.length === 1) {
+      const candidate = trip!.availabilityRanges[0]; const days = range(candidate.start, candidate.end); const names = days.map(day => `availability:day:${day}`); requireAnswers(names);
+      for (const day of days) trip = await repository.setAvailability(trip!.id, person.id, day, 'all-day', data.get(`availability:day:${day}`) as AvailabilityStatus);
+    } else {
+      const names = trip!.availabilityRanges.map(candidate => `availability:range:${candidate.id}`); requireAnswers(names);
+      for (const candidate of trip!.availabilityRanges) trip = await repository.setRangeAvailability(trip!.id, person.id, candidate.start, candidate.end, data.get(`availability:range:${candidate.id}`) as AvailabilityStatus);
+    }
+  }
+  if (step === 'transport') {
+    const options = relevantParticipantOptions(trip!.transportOptions); const names = options.map(option => `vote:transport:${option.id}`); requireAnswers(names);
+    for (const option of options) trip = await repository.voteForTransport(trip!.id, option.id, person.id, data.get(`vote:transport:${option.id}`) as VoteValue);
+  }
+  if (step === 'stays') {
+    const options = relevantParticipantOptions(trip!.accommodationOptions); const names = options.map(option => `vote:stay:${option.id}`); requireAnswers(names);
+    for (const option of options) trip = await repository.voteForAccommodation(trip!.id, option.id, person.id, data.get(`vote:stay:${option.id}`) as VoteValue);
+  }
+  if (step === 'activities') {
+    const options = relevantParticipantOptions(trip!.activities); const names = options.map(option => `vote:activity:${option.id}`); requireAnswers(names);
+    for (const option of options) trip = await repository.voteForActivity(trip!.id, option.id, person.id, data.get(`vote:activity:${option.id}`) as VoteValue);
+  }
+  render();
+  onboardingStepIndex += 1;
+  renderOnboarding();
+}
+
+function showTrip(result: TripResult & { session: TripSession }, mode: AppMode = 'organiser'): void {
   trip = result.trip;
   const sessionPerson = result.trip.participants.find(person => person.id === result.session.participantId) ?? result.trip.participants[0];
   session = sessionPerson ? { tripId: result.trip.id, participantId: sessionPerson.id, displayName: sessionPerson.name } : result.session;
   canEdit = result.trip.id !== 'demo';
+  appMode = mode;
   itineraryPersonId = '';
   $<HTMLDialogElement>('#tp-join-dialog').close();
   const readOnlyPill = $('#tp-read-only-pill');
-  readOnlyPill.textContent = trip.id === 'demo' ? 'Demo · View only' : 'View only';
-  readOnlyPill.hidden = canEdit;
+  readOnlyPill.textContent = trip.id === 'demo' ? 'Demo · View only' : 'Participant';
+  readOnlyPill.hidden = canEdit && appMode === 'organiser';
   render();
 }
 
-function requestTripIdentity(loadedTrip: Trip): void {
+function requestTripIdentity(loadedTrip: Trip, useCurrentIdentity = false): void {
   trip = loadedTrip;
   if (loadedTrip.id === 'demo') {
     showTrip({ trip: loadedTrip, session: { tripId: loadedTrip.id, participantId: '', displayName: 'Guest' } });
@@ -1064,7 +1243,8 @@ function requestTripIdentity(loadedTrip: Trip): void {
   select.innerHTML = '<option value="">Choose your name</option>'
     + loadedTrip.participants.map(person => `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name)}</option>`).join('')
     + '<option value="__new__">I’m not listed</option>';
-  select.value = '';
+  select.value = useCurrentIdentity && session ? session.participantId : '';
+  form.querySelectorAll<HTMLInputElement>('[name="role"]').forEach(input => { input.checked = useCurrentIdentity && input.value === appMode; });
   const nameField = form.querySelector<HTMLElement>('[data-new-participant]')!;
   const nameInput = form.elements.namedItem('name') as HTMLInputElement;
   nameField.hidden = true;
@@ -1142,10 +1322,15 @@ export async function mountTripPlanner(): Promise<void> {
     error.hidden = true; button.disabled = true; button.textContent = 'Joining…';
     try {
       if (!validateForm(form) || !trip) throw new Error('Choose your name or add it to join the trip.');
+      const role = formValue(form, 'role') as AppMode;
+      if (role !== 'organiser' && role !== 'participant') throw new Error('Choose whether you’re an organiser or participant.');
       const participantId = formValue(form, 'participantId');
-      showTrip(await repository.accessTrip(participantId === '__new__'
+      const result = await repository.accessTrip(participantId === '__new__'
         ? { tripId: trip.id, displayName: formValue(form, 'name') }
-        : { tripId: trip.id, participantId }));
+        : { tripId: trip.id, participantId });
+      showTrip(result, role);
+      localStorage.setItem(onboardingStorageKey('mode'), role);
+      if (role === 'participant' && localStorage.getItem(onboardingStorageKey('complete')) !== 'true') startParticipantOnboarding();
     } catch (caught) {
       if (caught instanceof RevisionConflictError && trip) trip = await repository.getTrip(trip.id);
       error.textContent = caught instanceof Error ? caught.message : 'Could not join the trip.';
@@ -1163,6 +1348,18 @@ export async function mountTripPlanner(): Promise<void> {
     nameInput.required = addingName;
     if (addingName) nameInput.focus(); else nameInput.value = '';
   });
+
+  $<HTMLFormElement>('#tp-onboarding-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const button = $<HTMLButtonElement>('#tp-onboarding-next');
+    const error = $('#tp-onboarding-error');
+    error.hidden = true; button.disabled = true; button.textContent = onboardingSteps[onboardingStepIndex] === 'complete' ? 'Opening…' : 'Saving…';
+    try { await saveOnboardingStep(form); }
+    catch (caught) { error.textContent = caught instanceof Error ? caught.message : 'Could not save your answers.'; error.hidden = false; }
+    finally { button.disabled = false; if ($<HTMLDialogElement>('#tp-onboarding-dialog').open) button.textContent = onboardingSteps[onboardingStepIndex] === 'complete' ? 'Enter trip' : 'Save and continue'; }
+  });
+  $('#tp-onboarding-back').addEventListener('click', () => { if (onboardingStepIndex > 0) { onboardingStepIndex -= 1; renderOnboarding(); } });
 
   $('#tp-export').addEventListener('click', exportCurrentTrip);
 
@@ -1202,6 +1399,30 @@ export async function mountTripPlanner(): Promise<void> {
       showDemoReadOnlyMessage();
       return;
     }
+    if (appMode === 'participant' && target.closest(participantOrganiserSelector)) {
+      event.preventDefault();
+      showToast('Only an organiser can change the shared plan.');
+      return;
+    }
+    if (target.closest('[data-edit-onboarding-profile]')) {
+      $<HTMLDialogElement>('#tp-onboarding-dialog').close();
+      resumeOnboardingAfterPersonSave = true;
+      openPersonDialog(session!.participantId);
+      return;
+    }
+    if (target.closest('#tp-user-button') && trip) {
+      requestTripIdentity(trip, true);
+      return;
+    }
+    const copyParticipantLink = target.closest<HTMLButtonElement>('[data-copy-participant-link]');
+    if (copyParticipantLink) {
+      const person = trip!.participants.find(candidate => candidate.id === copyParticipantLink.dataset.copyParticipantLink);
+      if (!person) return;
+      void navigator.clipboard.writeText(participantLink(person.id))
+        .then(() => showToast(`${person.name}’s participant link copied.`))
+        .catch(() => showToast('Could not copy the link.'));
+      return;
+    }
     const locationSuggestion = target.closest<HTMLButtonElement>('[data-location-suggestion]');
     if (locationSuggestion) {
       const result = JSON.parse(decodeURIComponent(locationSuggestion.dataset.locationSuggestion!)) as { location: string; latitude: number; longitude: number };
@@ -1225,8 +1446,8 @@ export async function mountTripPlanner(): Promise<void> {
     if (target.closest('#tp-setup-prev-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() - 1, 1); renderSetupCalendar(); return; }
     if (target.closest('#tp-setup-next-month')) { setupCalendarMonth = new Date(setupCalendarMonth.getFullYear(), setupCalendarMonth.getMonth() + 1, 1); renderSetupCalendar(); return; }
     const view = target.closest<HTMLElement>('[data-view]'); if (view?.dataset.view) return setView(view.dataset.view as View);
-    const rangeCell = target.closest<HTMLButtonElement>('[data-range-start]'); if (rangeCell) { const currentlyAvailable = trip!.availability.some(entry => entry.participantId === rangeCell.dataset.person && entry.status === 'available' && entry.date >= rangeCell.dataset.rangeStart! && entry.date <= rangeCell.dataset.rangeEnd!); void mutate(() => repository.setRangeAvailability(trip!.id, rangeCell.dataset.person!, rangeCell.dataset.rangeStart!, rangeCell.dataset.rangeEnd!, currentlyAvailable ? 'unavailable' : 'available'), `${trip!.participants.find(person => person.id === rangeCell.dataset.person)?.name} updated.`); return; }
-    const cell = target.closest<HTMLButtonElement>('[data-date]'); if (cell) { const slot = cell.dataset.slot as AvailabilitySlot; const current = statusFor(cell.dataset.person!, cell.dataset.date!, slot); const next: AvailabilityStatus = current === 'available' ? 'unavailable' : 'available'; void mutate(() => repository.setAvailability(trip!.id, cell.dataset.person!, cell.dataset.date!, slot, next), `${trip!.participants.find(person => person.id === cell.dataset.person)?.name} marked ${next}.`); return; }
+    const rangeCell = target.closest<HTMLButtonElement>('[data-range-start]'); if (rangeCell) { if (appMode === 'participant' && rangeCell.dataset.person !== session!.participantId) return; const currentlyAvailable = trip!.availability.some(entry => entry.participantId === rangeCell.dataset.person && entry.status === 'available' && entry.date >= rangeCell.dataset.rangeStart! && entry.date <= rangeCell.dataset.rangeEnd!); void mutate(() => repository.setRangeAvailability(trip!.id, rangeCell.dataset.person!, rangeCell.dataset.rangeStart!, rangeCell.dataset.rangeEnd!, currentlyAvailable ? 'unavailable' : 'available'), `${trip!.participants.find(person => person.id === rangeCell.dataset.person)?.name} updated.`); return; }
+    const cell = target.closest<HTMLButtonElement>('[data-date]'); if (cell) { if (appMode === 'participant' && cell.dataset.person !== session!.participantId) return; const slot = cell.dataset.slot as AvailabilitySlot; const current = statusFor(cell.dataset.person!, cell.dataset.date!, slot); const next: AvailabilityStatus = current === 'available' ? 'unavailable' : 'available'; void mutate(() => repository.setAvailability(trip!.id, cell.dataset.person!, cell.dataset.date!, slot, next), `${trip!.participants.find(person => person.id === cell.dataset.person)?.name} marked ${next}.`); return; }
     const vote = target.closest<HTMLButtonElement>('[data-vote]'); if (vote) { void mutate(() => repository.voteForAccommodation(trip!.id, vote.dataset.accommodation!, session!.participantId, vote.dataset.vote as VoteValue), 'Vote saved.'); return; }
     const transportVote = target.closest<HTMLButtonElement>('[data-transport-vote]'); if (transportVote) { void mutate(() => repository.voteForTransport(trip!.id, transportVote.dataset.transport!, session!.participantId, transportVote.dataset.transportVote as VoteValue), 'Vote saved.'); return; }
     const select = target.closest<HTMLButtonElement>('[data-select-stay]'); if (select) { void mutate(() => repository.selectAccommodation(trip!.id, select.dataset.selectStay!), 'Stay selected.'); return; }
@@ -1264,7 +1485,11 @@ export async function mountTripPlanner(): Promise<void> {
     if (target.closest('#tp-add-activity')) return openActivityDialog();
     const editActivity = target.closest<HTMLElement>('[data-edit-activity]'); if (editActivity) return openActivityDialog(editActivity.dataset.editActivity);
     const removeActivity = target.closest<HTMLElement>('[data-remove-activity]'); if (removeActivity) { if (window.confirm('Delete this activity?')) void mutate(() => repository.removeActivityOption(trip!.id, removeActivity.dataset.removeActivity!), 'Activity deleted.'); return; }
-    if (target.closest('[data-close-dialog]')) closeDialogs();
+    if (target.closest('[data-close-dialog]')) {
+      const resume = resumeOnboardingAfterPersonSave && Boolean(target.closest('#tp-person-dialog'));
+      closeDialogs();
+      if (resume) { resumeOnboardingAfterPersonSave = false; renderOnboarding(); $<HTMLDialogElement>('#tp-onboarding-dialog').showModal(); }
+    }
   });
 
   $<HTMLSelectElement>('#tp-transport-form [name="mode"]').addEventListener('change', updateTransportFields);
@@ -1308,13 +1533,36 @@ export async function mountTripPlanner(): Promise<void> {
   ($('#tp-trip-form') as HTMLFormElement).addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; if (!validateForm(form)) return; const data = new FormData(form); closeDialogs(); void mutate(() => repository.updateTrip(trip!.id, { title: formValue(form, 'title'), destination: formValue(form, 'destination'), destinationCoordinates: coordinatesFromForm(data, 'destination'), availabilityWindow: trip!.availabilityWindow, dateRange: trip!.dateRange }), 'Trip details updated.'); });
 
   if (savedToken) {
-    void repository.restoreTrip(savedToken).then(result => {
+    void repository.restoreTrip(savedToken).then(async result => {
       if (!result) {
         $('#tp-title').textContent = 'Trip not found';
         $('#tp-content').innerHTML = '<section class="tp-loading-state tp-error-state"><h1>Trip not found</h1><p>This trip does not exist or the link is incomplete.</p><a class="tp-button tp-button-primary" href="' + appBase + '/">Create a trip</a></section>';
         return;
       }
-      if (result.session) showTrip({ ...result, session: result.session });
+      const canonicalPath = tripUrl(result.trip.id);
+      if (location.pathname !== canonicalPath) history.replaceState(history.state, '', `${canonicalPath}${location.search}${location.hash}`);
+      const identityParams = new URLSearchParams(location.search);
+      const requestedRole = identityParams.get('role');
+      const requestedParticipantId = identityParams.get('participant');
+      const linkedPerson = requestedParticipantId ? result.trip.participants.find(person => person.id === requestedParticipantId) : undefined;
+      if ((requestedRole === 'organiser' || requestedRole === 'participant') && linkedPerson) {
+        try {
+          const linkedResult = await repository.accessTrip({ tripId: result.trip.id, participantId: linkedPerson.id });
+          showTrip(linkedResult, requestedRole);
+          localStorage.setItem(onboardingStorageKey('mode'), requestedRole);
+          removeIdentityParams();
+          if (requestedRole === 'participant' && localStorage.getItem(onboardingStorageKey('complete')) !== 'true') startParticipantOnboarding();
+          return;
+        } catch (caught) {
+          trip = result.trip;
+          showToast(caught instanceof Error ? caught.message : 'Could not use this participant link.');
+        }
+      }
+      if (result.session) {
+        const savedMode = localStorage.getItem(`trip-planner:mode:${result.trip.id}`) === 'participant' ? 'participant' : 'organiser';
+        showTrip({ ...result, session: result.session }, savedMode);
+        if (savedMode === 'participant' && localStorage.getItem(onboardingStorageKey('complete')) !== 'true') startParticipantOnboarding();
+      }
       else requestTripIdentity(result.trip);
     }).catch(() => {
       $('#tp-title').textContent = 'Could not load trip';

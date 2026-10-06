@@ -4,7 +4,7 @@ import { guardRequest, json } from '../../lib/server/request';
 export const prerender = false;
 
 export const GET: APIRoute = async context => {
-  const guarded = await guardRequest(context, 60);
+  const guarded = await guardRequest(context);
   if (guarded instanceof Response) return guarded;
   if (!guarded.env.GEOAPIFY_API_KEY) return json({ error: 'Geocoding is not configured.' }, 503);
   const query = context.url.searchParams.get('text')?.trim() ?? '';

@@ -1,6 +1,6 @@
 import type { APIContext } from 'astro';
 import { env as cloudflareEnv } from 'cloudflare:workers';
-import { enforceRateLimit } from './database';
+import { validTripId as isValidTripId } from '../trip-planner/trip-id';
 
 const cookieName = 'trip_planner_session';
 
@@ -45,11 +45,10 @@ export async function browserSession(context: APIContext): Promise<string> {
   return id;
 }
 
-export async function guardRequest(context: APIContext, limit?: number): Promise<{ env: CloudflareEnv; sessionId: string } | Response> {
+export async function guardRequest(context: APIContext): Promise<{ env: CloudflareEnv; sessionId: string } | Response> {
   try {
     const env = environment(context);
     const sessionId = await browserSession(context);
-    if (!await enforceRateLimit(env.DB, sessionId, limit)) return json({ error: 'Too many requests. Please wait a minute and try again.' }, 429);
     return { env, sessionId };
   } catch (error) {
     console.error(error);
@@ -71,5 +70,5 @@ export async function jsonBody<T>(request: Request, maxBytes = 1_000_000): Promi
 }
 
 export function validTripId(value: string | undefined): value is string {
-  return value === 'demo' || Boolean(value && /^trip_[A-Za-z0-9_-]{32}$/.test(value));
+  return isValidTripId(value);
 }

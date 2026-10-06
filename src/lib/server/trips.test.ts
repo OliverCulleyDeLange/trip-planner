@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyMutation, createTrip, importTrip, joinTrip, newTripId } from './trips';
 import { buildDemoTrip } from '../trip-planner/demo';
+import { validTripId } from '../trip-planner/trip-id';
 import type { TripExport } from '../trip-planner/types';
 
 const request = {
@@ -12,7 +13,13 @@ describe('trip model', () => {
   it('creates high-entropy URL-safe trip IDs', () => {
     const ids = new Set(Array.from({ length: 50 }, () => newTripId()));
     expect(ids.size).toBe(50);
-    for (const id of ids) expect(id).toMatch(/^trip_[A-Za-z0-9_-]{32}$/);
+    for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  });
+
+  it('rejects legacy prefixed trip IDs', () => {
+    const id = newTripId();
+    expect(validTripId(id)).toBe(true);
+    expect(validTripId(`trip_${id}`)).toBe(false);
   });
 
   it('creates and joins a shared trip without a password', () => {
@@ -46,17 +53,32 @@ describe('trip model', () => {
     expect(trip.availability).toHaveLength(1);
   });
 
+  it('records an explicit unavailable answer for a date-range poll', () => {
+    const { trip } = createTrip(request);
+    const participantId = trip.participants[0].id;
+    applyMutation(trip, { operation: 'setRangeAvailability', payload: { participantId, start: '2027-01-10', end: '2027-01-12', status: 'unavailable' } });
+    expect(trip.availability).toContainEqual({ participantId, date: '2027-01-10', slot: 'all-day', status: 'unavailable' });
+  });
+
   it('imports legacy exports under a fresh private ID', () => {
     const { trip } = createTrip(request);
     const oldId = trip.id;
     const result = importTrip({ schemaVersion: 1, exportedAt: new Date().toISOString(), trip } satisfies TripExport);
     expect(result.trip.id).not.toBe(oldId);
-    expect(result.trip.id).toMatch(/^trip_[A-Za-z0-9_-]{32}$/);
+    expect(result.trip.id).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(result.trip.revision).toBe(0);
   });
 
   it('creates a complete demo journey for every traveller', () => {
     const trip = buildDemoTrip('demo');
+    expect(trip.participants.map(person => ({ id: person.id, name: person.name }))).toEqual([
+      { id: 'adam', name: 'Adam' },
+      { id: 'bob', name: 'Bob' },
+      { id: 'charlie', name: 'Charlie' },
+      { id: 'dave', name: 'Dave' },
+      { id: 'eve', name: 'Eve' },
+    ]);
+    expect(JSON.stringify(trip)).not.toMatch(/oliver|alex|conor|hanah|jacob/i);
     for (const person of trip.participants) {
       const journeys = trip.transportOptions.filter(option => option.participantIds.includes(person.id));
       expect(journeys.some(option => option.departureAt.startsWith(trip.dateRange.start))).toBe(true);
