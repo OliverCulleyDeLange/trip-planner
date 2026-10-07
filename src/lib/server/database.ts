@@ -44,6 +44,12 @@ export const relationalTableColumns = {
 export type RelationalTable = keyof typeof relationalTableColumns;
 export type RelationalRows = Record<RelationalTable, unknown[][]>;
 
+export function guardedInsertSql(table: RelationalTable, rowCount: number): string {
+  const columns = relationalTableColumns[table];
+  const placeholders = Array.from({ length: rowCount }, () => `(${columns.map(() => '?').join(', ')})`).join(', ');
+  return `WITH input (${columns.join(', ')}) AS (VALUES ${placeholders}) INSERT INTO ${table} (${columns.join(', ')}) SELECT ${columns.join(', ')} FROM input WHERE EXISTS (SELECT 1 FROM trips WHERE id = ? AND revision = ?)`;
+}
+
 const boolean = (value: unknown): boolean => Number(value) === 1;
 const optionalNumber = (value: unknown): number | undefined => typeof value === 'number' ? value : undefined;
 const coordinates = (latitude: unknown, longitude: unknown): GeoCoordinates | undefined =>
@@ -254,13 +260,11 @@ function appendInsertStatements(
 ): void {
   if (!rows.length) return;
   const columns = relationalTableColumns[table];
-  const valuesPerRow = columns.length + (guard ? 2 : 0);
-  const chunkSize = Math.max(1, Math.floor(90 / valuesPerRow));
+  const chunkSize = Math.max(1, Math.floor((90 - (guard ? 2 : 0)) / columns.length));
   for (let offset = 0; offset < rows.length; offset += chunkSize) {
     const chunk = rows.slice(offset, offset + chunkSize);
     if (guard) {
-      const select = chunk.map(() => `SELECT ${columns.map(() => '?').join(', ')} WHERE EXISTS (SELECT 1 FROM trips WHERE id = ? AND revision = ?)`).join(' UNION ALL ');
-      statements.push(database.prepare(`INSERT INTO ${table} (${columns.join(', ')}) ${select}`).bind(...chunk.flatMap(row => [...row, guard.tripId, guard.revision])));
+      statements.push(database.prepare(guardedInsertSql(table, chunk.length)).bind(...chunk.flat(), guard.tripId, guard.revision));
     } else {
       const placeholders = chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
       statements.push(database.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES ${placeholders}`).bind(...chunk.flat()));
