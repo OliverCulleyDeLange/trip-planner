@@ -7,9 +7,12 @@ import type {
 type View = 'overview' | 'people' | 'availability' | 'transport' | 'stays' | 'activities';
 type AppMode = 'organiser' | 'participant';
 type OnboardingStep = 'details' | 'availability' | 'transport' | 'stays' | 'activities' | 'complete';
+type RecentTrip = { id: string; title: string; destination: string; viewedAt: string };
 const repository = new ApiTripRepository();
 const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 const tripUrl = (tripId: string) => `${appBase}/trips/${encodeURIComponent(tripId)}`;
+const recentTripsKey = 'trip-planner:recent-trips';
+const recentTripsLimit = 6;
 let trip: Trip | undefined;
 let session: TripSession | undefined;
 let canEdit = false;
@@ -35,6 +38,53 @@ const formValue = (form: HTMLFormElement, name: string) => String(new FormData(f
 const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
 })[character]!);
+
+function loadRecentTrips(): RecentTrip[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(recentTripsKey) ?? '[]') as unknown;
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((item): item is RecentTrip => {
+      if (!item || typeof item !== 'object') return false;
+      const candidate = item as Partial<RecentTrip>;
+      return typeof candidate.id === 'string' && typeof candidate.title === 'string'
+        && typeof candidate.destination === 'string' && typeof candidate.viewedAt === 'string';
+    }).slice(0, recentTripsLimit);
+  } catch {
+    return [];
+  }
+}
+
+function recentTripDate(value: string): string {
+  const viewed = new Date(value);
+  if (Number.isNaN(viewed.getTime())) return 'Viewed recently';
+  const today = new Date();
+  const viewedDay = new Date(viewed.getFullYear(), viewed.getMonth(), viewed.getDate()).getTime();
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const dayDifference = Math.round((todayDay - viewedDay) / 86_400_000);
+  if (dayDifference === 0) return 'Viewed today';
+  if (dayDifference === 1) return 'Viewed yesterday';
+  return `Viewed ${new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: viewed.getFullYear() === today.getFullYear() ? undefined : 'numeric' }).format(viewed)}`;
+}
+
+function renderRecentTrips(): void {
+  const section = document.querySelector<HTMLElement>('#tp-recent-trips');
+  const list = document.querySelector<HTMLElement>('#tp-recent-trip-list');
+  if (!section || !list) return;
+  const recentTrips = loadRecentTrips();
+  section.hidden = recentTrips.length === 0;
+  list.innerHTML = recentTrips.map(recent => {
+    const href = tripUrl(recent.id);
+    return `<a class="tp-library-card" href="${escapeHtml(href)}"><strong>${escapeHtml(recent.title)}</strong><span>${escapeHtml(recent.destination || 'Destination not set')}</span><small>${escapeHtml(recentTripDate(recent.viewedAt))} · Open trip →</small></a>`;
+  }).join('');
+}
+
+function rememberRecentTrip(viewedTrip: Trip): void {
+  if (viewedTrip.id === 'demo') return;
+  const recent: RecentTrip = { id: viewedTrip.id, title: viewedTrip.title, destination: viewedTrip.destination, viewedAt: new Date().toISOString() };
+  const next = [recent, ...loadRecentTrips().filter(candidate => candidate.id !== viewedTrip.id)].slice(0, recentTripsLimit);
+  try { localStorage.setItem(recentTripsKey, JSON.stringify(next)); } catch { return; }
+  renderRecentTrips();
+}
 const money = (value: number, currency: 'GBP' | 'EUR' = 'GBP') => new Intl.NumberFormat('en-GB', {
   style: 'currency', currency, maximumFractionDigits: value % 1 ? 2 : 0,
 }).format(value);
@@ -311,6 +361,7 @@ async function mutate(action: () => Promise<Trip>, message: string): Promise<voi
       const replacement = trip.participants[0];
       if (replacement) session = { tripId: trip.id, participantId: replacement.id, displayName: replacement.name };
     }
+    rememberRecentTrip(trip);
     render();
     showToast(message);
   } catch (error) {
@@ -1229,6 +1280,7 @@ function showTrip(result: TripResult & { session: TripSession }, mode: AppMode =
   const readOnlyPill = $('#tp-read-only-pill');
   readOnlyPill.textContent = trip.id === 'demo' ? 'Demo · View only' : 'Participant';
   readOnlyPill.hidden = canEdit && appMode === 'organiser';
+  rememberRecentTrip(trip);
   render();
 }
 
@@ -1280,6 +1332,7 @@ export async function mountTripPlanner(): Promise<void> {
     const setup = $('#tp-access-form') as HTMLFormElement;
     canEdit = true;
     enhanceForms();
+    renderRecentTrips();
     renderSetupCalendar();
     setup.addEventListener('submit', async event => {
       event.preventDefault(); const button = setup.querySelector<HTMLButtonElement>('button[type="submit"]')!; const error = $('#tp-access-error'); button.disabled = true; button.textContent = 'Creating…'; error.hidden = true;

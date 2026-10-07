@@ -12,6 +12,14 @@ const { page, tripId } = Astro.props;
     <section class="tp-access" id="tp-access" aria-labelledby="tp-access-title">
       <div class="tp-access-card">
         <div class="tp-brand"><span aria-hidden="true">◎</span> Trip planner</div>
+        <section class="tp-recent-trips" id="tp-recent-trips" aria-labelledby="tp-recent-trips-title" hidden>
+          <div>
+            <p class="tp-eyebrow">Pick up where you left off</p>
+            <h2 id="tp-recent-trips-title">Recent trips</h2>
+            <p>Saved only in this browser on this device.</p>
+          </div>
+          <div class="tp-trip-library" id="tp-recent-trip-list"></div>
+        </section>
         <section class="tp-create-area" id="tp-create-area">
         <p class="tp-eyebrow">Plan together</p><h1 id="tp-access-title">Create a trip</h1>
         <p class="tp-access-copy">Build a shared trip with your group—no account needed. Or <a class="tp-demo-text-link" href={`${baseUrl}trips/demo`}>explore the demo</a>.</p>
