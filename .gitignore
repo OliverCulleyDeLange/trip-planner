@@ -8,3 +8,4 @@ dist/
 !.env.example
 .dev.vars
 .DS_Store
+scripts/demo-seed.sql

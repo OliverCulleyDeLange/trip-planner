@@ -2,27 +2,27 @@ import type { Participant, Trip } from './types';
 
 const people: Participant[] = [
   {
-    id: 'adam', name: 'Adam', initials: 'A', colour: '#8cc5a0', origin: 'Cambridge', originCoordinates: { latitude: 52.2053, longitude: 0.1218 }, sex: 'male', confirmed: true, goWithFlow: false,
+    id: 'adam', name: 'Adam', initials: 'A', colour: '#8cc5a0', origin: 'Cambridge', originCoordinates: { latitude: 52.2053, longitude: 0.1218 }, sex: 'male', confirmed: true,
     sleepingPreferences: { ownRoom: 'not-needed', ownBed: false, shareDoubleWithParticipantId: 'eve', acceptsSofaBed: false, roomPreferences: ['happy-to-share'], bedPreferences: [], shareWithParticipantIds: ['eve'] },
     baggage: [{ id: 'adam-cabin', label: 'Cabin bag', weightKg: 8, lengthCm: 55, widthCm: 40, heightCm: 20, category: 'cabin' }, { id: 'adam-skis', label: 'Ski bag', weightKg: 19, lengthCm: 185, widthCm: 30, heightCm: 20, category: 'sports' }],
   },
   {
-    id: 'bob', name: 'Bob', initials: 'B', colour: '#e4bd88', origin: 'London Stansted', originCoordinates: { latitude: 51.886, longitude: 0.2389 }, sex: 'male', confirmed: true, goWithFlow: false,
+    id: 'bob', name: 'Bob', initials: 'B', colour: '#e4bd88', origin: 'London Stansted', originCoordinates: { latitude: 51.886, longitude: 0.2389 }, sex: 'male', confirmed: true,
     sleepingPreferences: { ownRoom: 'not-needed', ownBed: true, acceptsSofaBed: false, roomPreferences: ['happy-to-share'], bedPreferences: ['own-bed'], shareWithParticipantIds: [] },
     baggage: [{ id: 'bob-cabin', label: 'Cabin bag', weightKg: 7, lengthCm: 55, widthCm: 40, heightCm: 20, category: 'cabin' }],
   },
   {
-    id: 'charlie', name: 'Charlie', initials: 'C', colour: '#8fb2dc', origin: 'London Gatwick', originCoordinates: { latitude: 51.1537, longitude: -0.1821 }, sex: 'male', confirmed: true, goWithFlow: false,
+    id: 'charlie', name: 'Charlie', initials: 'C', colour: '#8fb2dc', origin: 'London Gatwick', originCoordinates: { latitude: 51.1537, longitude: -0.1821 }, sex: 'male', confirmed: true,
     sleepingPreferences: { ownRoom: 'preferred', ownBed: true, acceptsSofaBed: false, roomPreferences: ['happy-to-share', 'prefer-own'], bedPreferences: ['own-bed'], shareWithParticipantIds: [] },
     baggage: [{ id: 'charlie-checked', label: 'Checked bag', weightKg: 20, category: 'checked' }, { id: 'charlie-skis', label: 'Snowboard bag', weightKg: 18, lengthCm: 170, widthCm: 35, heightCm: 20, category: 'sports' }],
   },
   {
-    id: 'dave', name: 'Dave', initials: 'D', colour: '#d99da2', origin: 'Bristol Airport', originCoordinates: { latitude: 51.3827, longitude: -2.7191 }, sex: 'male', confirmed: true, goWithFlow: false,
+    id: 'dave', name: 'Dave', initials: 'D', colour: '#d99da2', origin: 'Bristol Airport', originCoordinates: { latitude: 51.3827, longitude: -2.7191 }, sex: 'male', confirmed: true,
     sleepingPreferences: { ownRoom: 'not-needed', ownBed: true, acceptsSofaBed: false, roomPreferences: ['happy-to-share'], bedPreferences: ['own-bed'], shareWithParticipantIds: [] },
     baggage: [{ id: 'dave-cabin', label: 'Cabin bag', weightKg: 10, category: 'cabin' }, { id: 'dave-skis', label: 'Ski bag', weightKg: 20, lengthCm: 180, widthCm: 30, heightCm: 20, category: 'sports' }],
   },
   {
-    id: 'eve', name: 'Eve', initials: 'E', colour: '#83c6bf', origin: 'Cambridge', originCoordinates: { latitude: 52.2053, longitude: 0.1218 }, sex: 'female', confirmed: false, goWithFlow: false,
+    id: 'eve', name: 'Eve', initials: 'E', colour: '#83c6bf', origin: 'Cambridge', originCoordinates: { latitude: 52.2053, longitude: 0.1218 }, sex: 'female', confirmed: false,
     sleepingPreferences: { ownRoom: 'not-needed', ownBed: false, shareDoubleWithParticipantId: 'adam', acceptsSofaBed: false, roomPreferences: ['happy-to-share'], bedPreferences: [], shareWithParticipantIds: ['adam'] },
     baggage: [{ id: 'eve-checked', label: 'Checked bag', weightKg: 23, category: 'checked' }, { id: 'eve-skis', label: 'Ski bag', weightKg: 21, lengthCm: 190, widthCm: 32, heightCm: 22, category: 'sports' }],
   },

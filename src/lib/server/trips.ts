@@ -18,7 +18,7 @@ export function newParticipant(name: string, index: number, id = `person-${crypt
   if (!cleanName || cleanName.length > 80) throw new Error('Enter a name between 1 and 80 characters.');
   return {
     id, name: cleanName, initials: cleanName.slice(0, 1).toUpperCase(), colour: colours[index % colours.length],
-    origin: '', sex: 'prefer-not-to-say', confirmed: false, goWithFlow: false,
+    origin: '', sex: 'prefer-not-to-say', confirmed: false,
     sleepingPreferences: {
       ownRoom: 'not-needed', ownBed: true, acceptsSofaBed: false, roomPreferences: ['happy-to-share'],
       bedPreferences: ['own-bed'], shareWithParticipantIds: [],
@@ -66,8 +66,8 @@ export function normalizeTrip(trip: Trip): Trip {
     if ((option.mode as string) === 'transfer') option.mode = 'coach';
   });
   trip.participants.forEach(person => {
+    delete (person as Participant & { goWithFlow?: unknown }).goWithFlow;
     person.sex ??= 'prefer-not-to-say';
-    person.goWithFlow ??= false;
     person.baggage ??= [];
     const preferences = person.sleepingPreferences;
     preferences.roomPreferences ??= preferences.ownRoom === 'required' ? ['require-own'] : ['happy-to-share'];

@@ -17,7 +17,7 @@ export const POST: APIRoute = async context => {
     if (!current) return json({ error: 'Trip not found.' }, 404);
     if (!Number.isInteger(body.expectedRevision) || current.revision !== body.expectedRevision) return json({ trip: current }, 409);
     const changed = applyMutation(structuredClone(current), body);
-    const saved = await updateTrip(guarded.env.DB, changed, body.expectedRevision);
+    const saved = await updateTrip(guarded.env.DB, changed, body.expectedRevision, body);
     if (!saved) return json({ trip: await loadTrip(guarded.env.DB, current.id) }, 409);
     return json({ trip: saved });
   } catch (error) {

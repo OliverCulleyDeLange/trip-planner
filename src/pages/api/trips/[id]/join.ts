@@ -18,7 +18,7 @@ export const POST: APIRoute = async context => {
     if (!body.participantId && trip.revision !== body.expectedRevision) return json({ trip }, 409);
     const result = joinTrip(structuredClone(trip), body.displayName, body.participantId);
     if (!body.participantId) {
-      const saved = await updateTrip(guarded.env.DB, result.trip, body.expectedRevision);
+      const saved = await updateTrip(guarded.env.DB, result.trip, body.expectedRevision, { operation: 'saveParticipant', payload: result.trip.participants.at(-1) });
       if (!saved) return json({ trip: await loadTrip(guarded.env.DB, trip.id) }, 409);
       result.trip = saved;
     }

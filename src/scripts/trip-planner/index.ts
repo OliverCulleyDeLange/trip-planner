@@ -685,7 +685,7 @@ function renderVoteChart(option: { votes: Record<string, VoteValue> }): string {
 
 function allowsDoubleShare(person: Participant, other: Participant): boolean {
   const preferences = person.sleepingPreferences;
-  if (person.goWithFlow || preferences.shareWithParticipantIds.includes(other.id)) return true;
+  if (preferences.shareWithParticipantIds.includes(other.id)) return true;
   if (preferences.bedPreferences.includes('share-anyone')) return true;
   if (other.sex === 'female' && preferences.bedPreferences.includes('share-women')) return true;
   if (other.sex === 'male' && preferences.bedPreferences.includes('share-men')) return true;
@@ -768,8 +768,7 @@ function unassignedBedReason(person: Participant, rooms: Room[], assignments: Ma
   if (spareDoubles.length) {
     const occupantNames = [...new Set(spareDoubles.flatMap(({ occupants }) => occupants.map(occupant => occupant.name)))];
     if (needsPrivateRoom(person)) return `${person.name} needs a private room; the remaining ${spareDoubles.length === 1 ? 'space is' : 'spaces are'} in an occupied double bed.`;
-    const hasSharingPreference = person.goWithFlow
-      || person.sleepingPreferences.shareWithParticipantIds.length > 0
+    const hasSharingPreference = person.sleepingPreferences.shareWithParticipantIds.length > 0
       || person.sleepingPreferences.bedPreferences.some(preference => preference.startsWith('share-'));
     if (!hasSharingPreference) return `${person.name} wants their own bed; the remaining ${spareDoubles.length === 1 ? 'space is' : 'spaces are'} in an occupied double bed.`;
     return `${person.name} and ${occupantNames.join(' / ')} do not have mutually compatible double-sharing preferences, so the remaining ${spareDoubles.length === 1 ? 'space cannot' : 'spaces cannot'} be used.`;
@@ -1058,7 +1057,7 @@ async function savePerson(form: HTMLFormElement): Promise<void> {
   const shareWithParticipantIds = data.getAll('sharePerson').map(String);
   if (partnerId && !shareWithParticipantIds.includes(partnerId)) shareWithParticipantIds.push(partnerId);
   const originCoordinates = coordinatesFromForm(data, 'origin');
-  const person: Participant = { id, name: String(data.get('name')).trim(), initials: String(data.get('name')).trim().slice(0, 1).toUpperCase(), colour: existing?.colour ?? colours[trip!.participants.length % colours.length], origin: String(data.get('origin')).trim(), originCoordinates, sex: String(data.get('sex')) as Participant['sex'], confirmed: existing?.confirmed ?? false, goWithFlow: false, sleepingPreferences: { ownRoom, ownBed: bedPreferences.includes('own-bed'), shareDoubleWithParticipantId: partnerId, acceptsSofaBed: false, roomPreferences, bedPreferences, shareWithParticipantIds }, baggage: bags };
+  const person: Participant = { id, name: String(data.get('name')).trim(), initials: String(data.get('name')).trim().slice(0, 1).toUpperCase(), colour: existing?.colour ?? colours[trip!.participants.length % colours.length], origin: String(data.get('origin')).trim(), originCoordinates, sex: String(data.get('sex')) as Participant['sex'], confirmed: existing?.confirmed ?? false, sleepingPreferences: { ownRoom, ownBed: bedPreferences.includes('own-bed'), shareDoubleWithParticipantId: partnerId, acceptsSofaBed: false, roomPreferences, bedPreferences, shareWithParticipantIds }, baggage: bags };
   closeDialogs();
   await mutate(() => repository.saveParticipant(trip!.id, person), existing ? 'Person updated.' : 'Person added.');
   if (resumeOnboardingAfterPersonSave) {

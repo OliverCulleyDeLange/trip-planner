@@ -12,7 +12,7 @@ Production: <https://oliverdelange.co.uk/trip-planner/>
 - Relational D1 tables for trips, participants, date options, availability, transport, accommodation, activities and anonymous browser sessions
 - Optimistic revision checks reject stale writes with HTTP `409`
 - Signed `HttpOnly`, `Secure`, `SameSite=Lax` browser-session cookies remember each browser's selected traveller
-- A seeded, publicly viewable `demo` trip is read-only; regenerate its migration after changing demo data with `pnpm db:generate-schema`
+- A seeded, publicly viewable `demo` trip is read-only; regenerate its standalone seed after changing demo data with `pnpm db:generate-demo-seed`
 - Geoapify requests are proxied by the Worker; its API key is never shipped to browser JavaScript
 - Versioned JSON export/import remains available as a user-controlled backup
 

@@ -12,7 +12,7 @@
     "check": "astro check",
     "preview": "wrangler dev",
     "test": "vitest run",
-    "db:generate-schema": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/generate-demo-migration.mjs",
+    "db:generate-demo-seed": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/generate-demo-seed.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:production": "wrangler d1 migrations apply DB --remote",
     "db:reset:local": "wrangler d1 execute DB --local --file scripts/reset-database.sql && wrangler d1 migrations apply DB --local",

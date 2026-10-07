@@ -16,8 +16,8 @@ function normalizeTrip(trip: Trip): Trip {
   trip.updatedAt ??= now;
   trip.activities ??= [];
   trip.participants.forEach(person => {
+    delete (person as Participant & { goWithFlow?: unknown }).goWithFlow;
     person.sex ??= 'prefer-not-to-say';
-    person.goWithFlow = false;
     const preferences = person.sleepingPreferences;
     preferences.roomPreferences ??= preferences.ownRoom === 'required'
       ? ['require-own']
@@ -403,7 +403,7 @@ export class LocalTripRepository implements TripRepository {
     const cleanName = name.trim();
     return {
       id, name: cleanName, initials: cleanName.slice(0, 1).toUpperCase(),
-      colour: colours[index % colours.length], origin: '', sex: 'prefer-not-to-say', confirmed: false, goWithFlow: false,
+      colour: colours[index % colours.length], origin: '', sex: 'prefer-not-to-say', confirmed: false,
       sleepingPreferences: { ownRoom: 'not-needed', ownBed: true, acceptsSofaBed: false, roomPreferences: ['happy-to-share'], bedPreferences: ['own-bed'], shareWithParticipantIds: [] }, baggage: [],
     };
   }

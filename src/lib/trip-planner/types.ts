@@ -25,7 +25,6 @@ export interface Participant {
   originCoordinates?: GeoCoordinates;
   sex: Sex;
   confirmed: boolean;
-  goWithFlow: boolean;
   sleepingPreferences: {
     ownRoom: 'required' | 'preferred' | 'not-needed';
     ownBed: boolean;
