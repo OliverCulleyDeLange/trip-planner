@@ -53,6 +53,15 @@ describe('trip model', () => {
     expect(trip.availability).toHaveLength(1);
   });
 
+  it('canonicalizes transport datetimes before persistence', () => {
+    const trip = buildDemoTrip('canonical-time-test');
+    const option = { ...trip.transportOptions[0], departureAt: '2026-11-05T9:05', arrivalAt: '2026-11-05T10:50:42' };
+    applyMutation(trip, { operation: 'saveTransportOption', payload: option });
+    const saved = trip.transportOptions.find(candidate => candidate.id === option.id)!;
+    expect(saved.departureAt).toBe('2026-11-05T09:05');
+    expect(saved.arrivalAt).toBe('2026-11-05T10:50');
+  });
+
   it('records an explicit unavailable answer for a date-range poll', () => {
     const { trip } = createTrip(request);
     const participantId = trip.participants[0].id;
@@ -113,5 +122,17 @@ describe('trip model', () => {
     const accommodationId = trip.accommodationOptions[0].id;
     applyMutation(trip, { operation: 'removeAccommodationOption', payload: { accommodationId } });
     expect(trip.accommodationOptions.some(option => option.id === accommodationId)).toBe(false);
+  });
+
+  it('adds accommodation by generated id without replacing an existing option with the same name', () => {
+    const trip = buildDemoTrip('two-stays-test');
+    const original = structuredClone(trip.accommodationOptions[0]);
+    trip.accommodationOptions = [original];
+    const added = { ...structuredClone(original), id: 'stay-new-uuid', sourceUrl: 'https://example.com/second' };
+
+    applyMutation(trip, { operation: 'saveAccommodationOption', payload: added });
+
+    expect(trip.accommodationOptions).toHaveLength(2);
+    expect(trip.accommodationOptions.map(option => option.id)).toEqual([original.id, added.id]);
   });
 });

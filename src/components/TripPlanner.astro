@@ -160,18 +160,20 @@ const { page, tripId } = Astro.props;
           <label><span>Mode</span><select name="mode" required><option value="flight">Flight</option><option value="train">Train</option><option value="coach">Coach</option><option value="car">Car</option><option value="ferry">Ferry</option></select></label>
           <label data-transport-modes="flight train coach ferry"><span>Operator</span><input name="operator" placeholder="e.g. Jet2 or Eurostar" /></label>
           <label data-transport-modes="car"><span>Seats</span><input name="seats" type="number" min="1" step="1" placeholder="5" /></label>
-          <label><span>Price per person</span><input name="price" type="number" min="0" step="0.01" placeholder="149.00" /></label>
-          <label class="tp-location-field"><span>From</span><input name="origin" placeholder="Manchester" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
-          <label class="tp-location-field"><span>To</span><input name="destination" placeholder="Turin" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label><span id="tp-transport-price-label">Price per person</span><input name="price" type="number" min="0" step="0.01" placeholder="149.00" /></label>
+          <label class="tp-location-field"><span id="tp-transport-origin-label">From</span><input name="origin" placeholder="Manchester" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="originLatitude" type="hidden" data-location-lat /><input name="originLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
+          <label class="tp-location-field"><span id="tp-transport-destination-label">To</span><input name="destination" placeholder="Turin" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="destinationLatitude" type="hidden" data-location-lat /><input name="destinationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
           <label><span>Departure date</span><input name="departureDate" type="date" /></label>
-          <label><span>Departure time</span><input name="departureTime" placeholder="e.g. 14:30" /></label>
+          <label><span>Departure time</span><input name="departureTime" type="time" step="60" /></label>
           <label><span>Arrival date</span><input name="arrivalDate" type="date" /></label>
-          <label><span>Arrival time</span><input name="arrivalTime" placeholder="e.g. 17:15" /></label>
+          <label><span>Arrival time</span><input name="arrivalTime" type="time" step="60" /></label>
           <label data-transport-modes="flight"><span>Checked bag price</span><input name="checkedPrice" type="number" min="0" step="0.01" /></label>
           <label data-transport-modes="flight"><span>Sports bag price</span><input name="sportsPrice" type="number" min="0" step="0.01" /></label>
           <label data-transport-modes="flight"><span>Checked allowance (kg)</span><input name="checkedMax" type="number" min="0" step="0.1" /></label>
           <label data-transport-modes="flight"><span>Sports allowance (kg)</span><input name="sportsMax" type="number" min="0" step="0.1" /></label>
           <label class="tp-wide-field" data-transport-modes="flight"><span>Official baggage rules URL</span><input name="baggageUrl" type="url" placeholder="https://operator.com/baggage" /></label>
+          <label class="tp-wide-field"><span>Listing or booking URL</span><input name="bookingUrl" type="url" placeholder="https://…" /></label>
+          <label class="tp-wide-field"><span>Notes</span><textarea name="notes" rows="3" placeholder="Pickup instructions, cancellation details or anything else the group should know"></textarea></label>
           <label class="tp-wide-field"><span>Booking reference</span><input name="bookingReference" placeholder="Add after booking" /></label>
         </div>
         <fieldset><legend>Travellers</legend><div class="tp-fieldset-heading"><small>Select everyone taking this option.</small><button class="tp-text-button" type="button" id="tp-clear-transport-people">Clear</button></div><div class="tp-person-checks" id="tp-person-checks"></div><p class="tp-capacity-warning" id="tp-transport-capacity-warning" role="alert" hidden></p></fieldset>
@@ -189,6 +191,10 @@ const { page, tripId } = Astro.props;
         <div class="tp-form-grid">
           <label><span>Name</span><input name="name" required /></label><label class="tp-location-field"><span>Location</span><input name="location" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="locationLatitude" type="hidden" data-location-lat /><input name="locationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
           <label><span>Total price</span><input name="price" type="number" min="0" step="0.01" /></label><label><span>Listing URL</span><input name="url" type="url" /></label>
+          <div class="tp-wide-field tp-airbnb-import" id="tp-airbnb-import-prompt" hidden>
+            <span id="tp-airbnb-import-status" role="status">Airbnb link detected. Auto-populate its name, location, rooms and beds?</span>
+            <div><button class="tp-button tp-button-primary" id="tp-import-airbnb" type="button">Yes, auto-populate</button><button class="tp-button tp-button-quiet" id="tp-dismiss-airbnb" type="button">Not now</button></div>
+          </div>
           <label><span>Check in</span><input name="checkIn" type="date" /></label><label><span>Check out</span><input name="checkOut" type="date" /></label>
           <label class="tp-wide-field"><span>Notes</span><textarea name="notes" rows="2" placeholder="Anything else the group should know"></textarea></label>
           <label class="tp-wide-field"><span>Booking reference</span><input name="bookingReference" placeholder="Add after booking" /></label>
@@ -210,7 +216,7 @@ const { page, tripId } = Astro.props;
           <label class="tp-location-field"><span>Location</span><input name="location" autocomplete="off" aria-autocomplete="list" aria-expanded="false" data-location-input /><input name="locationLatitude" type="hidden" data-location-lat /><input name="locationLongitude" type="hidden" data-location-lon /><span class="tp-location-suggestions" role="listbox" hidden></span><small class="tp-location-help">Select a suggestion to save this location to the map.</small></label>
           <label><span>Cost per person</span><input name="cost" type="number" min="0" step="0.01" /></label>
           <label><span>Date</span><input name="date" type="date" /></label>
-          <label><span>Time</span><input name="time" placeholder="e.g. 19:30 or after lunch" /></label>
+          <label><span>Time</span><input name="time" type="time" step="60" /></label>
           <label class="tp-wide-field"><span>URL</span><input name="url" type="url" /></label>
           <label class="tp-wide-field"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
         </div>
@@ -223,6 +229,17 @@ const { page, tripId } = Astro.props;
       <div class="tp-date-picker-head"><button type="button" id="tp-picker-prev" aria-label="Previous month">‹</button><h2 id="tp-picker-month"></h2><button type="button" id="tp-picker-next" aria-label="Next month">›</button></div>
       <div class="tp-single-month" id="tp-single-month"></div>
       <div class="tp-picker-actions"><button class="tp-text-button" type="button" id="tp-picker-clear">Clear date</button><button class="tp-button tp-button-quiet" type="button" id="tp-picker-cancel">Cancel</button></div>
+    </dialog>
+
+    <dialog class="tp-dialog tp-small-dialog tp-time-picker-dialog" id="tp-time-picker-dialog">
+      <div class="tp-time-picker-card">
+        <div class="tp-dialog-head"><div><p class="tp-eyebrow">Choose a time</p><h2>Set time</h2></div><button class="tp-icon-button" type="button" id="tp-time-picker-close" aria-label="Close">×</button></div>
+        <div class="tp-time-display" aria-label="Selected time"><button type="button" data-time-phase="hour">00</button><span>:</span><button type="button" data-time-phase="minute">00</button></div>
+        <div class="tp-time-period" aria-label="Time period"><button type="button" data-time-period="am">AM</button><button type="button" data-time-period="pm">PM</button></div>
+        <div class="tp-clock-face" id="tp-clock-face" aria-label="Clock face"></div>
+        <label class="tp-time-manual"><span>Or type a time</span><input id="tp-time-manual-input" type="time" step="60" data-time-picker-control /></label>
+        <div class="tp-picker-actions"><button class="tp-text-button" type="button" id="tp-time-picker-clear">Clear time</button><button class="tp-button tp-button-quiet" type="button" id="tp-time-picker-cancel">Cancel</button><button class="tp-button tp-button-primary" type="button" id="tp-time-picker-apply">Set time</button></div>
+      </div>
     </dialog>
 
     <dialog class="tp-dialog tp-small-dialog" id="tp-join-dialog">
@@ -255,6 +272,7 @@ const { page, tripId } = Astro.props;
         <p class="tp-form-error" id="tp-onboarding-error" role="alert" hidden></p>
         <div class="tp-dialog-actions tp-onboarding-actions">
           <button class="tp-button tp-button-quiet" id="tp-onboarding-back" type="button">Back</button>
+          <button class="tp-text-button" id="tp-onboarding-later" type="button">I’ll vote later</button>
           <button class="tp-button tp-button-primary" id="tp-onboarding-next" type="submit">Continue</button>
         </div>
       </form>

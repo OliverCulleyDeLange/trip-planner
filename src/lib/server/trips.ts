@@ -2,6 +2,7 @@ import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, CreateTripRequest, Participant,
   TransportOption, Trip, TripExport, TripSession, VoteValue,
 } from '../trip-planner/types';
+import { canonicalDateTime } from '../trip-planner/date';
 
 const colours = ['#8cc5a0', '#e4bd88', '#8fb2dc', '#d99da2', '#b7c982', '#b59acb', '#83c6bf'];
 const clone = <T>(value: T): T => structuredClone(value);
@@ -64,6 +65,8 @@ export function normalizeTrip(trip: Trip): Trip {
   trip.accommodationOptions ??= [];
   trip.transportOptions.forEach(option => {
     if ((option.mode as string) === 'transfer') option.mode = 'coach';
+    option.departureAt = canonicalDateTime(option.departureAt);
+    option.arrivalAt = canonicalDateTime(option.arrivalAt);
   });
   trip.participants.forEach(person => {
     delete (person as Participant & { goWithFlow?: unknown }).goWithFlow;
@@ -141,7 +144,13 @@ export function applyMutation(trip: Trip, mutation: TripMutation): Trip {
       trip.availability.push({ participantId: entry.participantId, date: entry.start, slot: 'all-day', status: entry.status });
       break;
     }
-    case 'saveTransportOption': upsert(trip.transportOptions, mutation.payload as TransportOption); break;
+    case 'saveTransportOption': {
+      const option = clone(mutation.payload as TransportOption);
+      option.departureAt = canonicalDateTime(option.departureAt);
+      option.arrivalAt = canonicalDateTime(option.arrivalAt);
+      upsert(trip.transportOptions, option);
+      break;
+    }
     case 'removeTransportOption': trip.transportOptions = trip.transportOptions.filter(option => option.id !== String(payload.transportId)); break;
     case 'voteForTransport': requireItem(trip.transportOptions, String(payload.transportId), 'Transport').votes[String(payload.participantId)] = payload.vote as VoteValue; break;
     case 'selectTransport': {

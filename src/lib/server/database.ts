@@ -2,6 +2,7 @@ import type {
   AccommodationOption, ActivityOption, GeoCoordinates, Participant, Room, TransportOption,
   Trip, TripSession, VoteValue,
 } from '../trip-planner/types';
+import { normalizeDateTime } from '../trip-planner/date';
 import type { TripMutation } from './trips.ts';
 import { normalizeTrip } from './trips.ts';
 
@@ -123,6 +124,7 @@ export function tripRelationalRows(trip: Trip): RelationalRows {
       JSON.stringify({
         ...(option.serviceNumber ? { serviceNumber: option.serviceNumber } : {}),
         ...(option.seats !== undefined ? { seats: option.seats } : {}),
+        ...(option.priceTotal !== undefined ? { priceTotal: option.priceTotal } : {}),
       }), JSON.stringify(option.baggageRules),
     ]);
     option.participantIds.forEach((participantId, index) => rows.transport_participants.push([trip.id, option.id, participantId, index]));
@@ -188,15 +190,16 @@ export async function loadTrip(database: D1Database, tripId: string): Promise<Tr
   const transportParticipants = grouped(tableRows.transport_participants, 'transport_id');
   const transportVotes = grouped(tableRows.transport_votes, 'transport_id');
   const transportOptions = tableRows.transport_options.map(option => {
-    const details = parsed<{ serviceNumber?: string | null; seats?: number | null }>(option.details_json, {});
+    const details = parsed<{ serviceNumber?: string | null; seats?: number | null; priceTotal?: number | null }>(option.details_json, {});
     return {
     id: String(option.id), mode: String(option.mode) as Trip['transportOptions'][number]['mode'], status: String(option.status) as Trip['transportOptions'][number]['status'],
     title: String(option.title), operator: String(option.operator), serviceNumber: details.serviceNumber ?? undefined,
     origin: String(option.origin), originCoordinates: coordinates(option.origin_latitude, option.origin_longitude),
     destination: String(option.destination), destinationCoordinates: coordinates(option.destination_latitude, option.destination_longitude),
-    departureAt: String(option.departure_at), arrivalAt: String(option.arrival_at),
+    departureAt: normalizeDateTime(String(option.departure_at)), arrivalAt: normalizeDateTime(String(option.arrival_at)),
     participantIds: (transportParticipants.get(String(option.id)) ?? []).map(item => String(item.participant_id)),
-    seats: details.seats ?? undefined, pricePerPerson: Number(option.price_per_person), currency: String(option.currency) as TransportOption['currency'],
+    seats: details.seats ?? undefined, pricePerPerson: Number(option.price_per_person), priceTotal: details.priceTotal ?? undefined,
+    currency: String(option.currency) as TransportOption['currency'],
     bookingUrl: option.booking_url ? String(option.booking_url) : undefined,
     baggageRules: parsed(option.baggage_rules_json, []),
     notes: option.notes ? String(option.notes) : undefined, votes: votes(transportVotes.get(String(option.id))),
@@ -313,7 +316,7 @@ function appendTripRows(database: D1Database, statements: D1PreparedStatement[],
 
 export async function insertTrip(database: D1Database, trip: Trip): Promise<Trip> {
   const now = new Date().toISOString();
-  const saved = { ...trip, revision: 1, createdAt: now, updatedAt: now };
+  const saved = normalizeTrip({ ...structuredClone(trip), revision: 1, createdAt: now, updatedAt: now });
   const statements: D1PreparedStatement[] = [database.prepare(
     `INSERT INTO trips (${tripColumns.join(', ')}) VALUES (${tripColumns.map(() => '?').join(', ')})`,
   ).bind(...tripRow(saved))];
@@ -323,7 +326,7 @@ export async function insertTrip(database: D1Database, trip: Trip): Promise<Trip
 }
 
 export async function updateTrip(database: D1Database, trip: Trip, expectedRevision: number, mutation?: TripMutation): Promise<Trip | undefined> {
-  const saved = { ...trip, revision: expectedRevision + 1, updatedAt: new Date().toISOString() };
+  const saved = normalizeTrip({ ...structuredClone(trip), revision: expectedRevision + 1, updatedAt: new Date().toISOString() });
   const coreValues = tripRow(saved).slice(2, -2);
   const coreColumns = tripColumns.slice(2, -2);
   const statements: D1PreparedStatement[] = [database.prepare(

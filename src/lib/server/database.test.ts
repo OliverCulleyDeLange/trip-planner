@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDemoTrip } from '../trip-planner/demo';
 import { applyMutation, type TripMutation } from './trips';
-import { jsonRowsInsertSql, relatedRowsSql, relationalTableColumns, updateTrip } from './database';
+import { jsonRowsInsertSql, relatedRowsSql, relationalTableColumns, tripRelationalRows, updateTrip } from './database';
 
 describe('D1 normalized persistence', () => {
   it('loads all normalized child tables in one fixed statement', () => {
@@ -26,6 +26,18 @@ describe('D1 normalized persistence', () => {
     expect(relationalTableColumns.transport_options).toContain('details_json');
     expect(relationalTableColumns.transport_options).not.toEqual(expect.arrayContaining(['service_number', 'seats']));
     expect(relationalTableColumns.accommodation_options).toEqual(expect.arrayContaining(['site_distances_json', 'rooms_json']));
+  });
+
+  it('keeps car total pricing in transport details without changing the relational schema', () => {
+    const demo = buildDemoTrip('car-price-test');
+    const car = structuredClone(demo.transportOptions[0]);
+    car.mode = 'car';
+    car.pricePerPerson = 0;
+    car.priceTotal = 420;
+    demo.transportOptions = [car];
+
+    const rows = tripRelationalRows(demo);
+    expect(JSON.parse(String(rows.transport_options[0][20]))).toMatchObject({ priceTotal: 420 });
   });
 
   it('keeps every ordinary mutation comfortably below the D1 Free query budget', async () => {

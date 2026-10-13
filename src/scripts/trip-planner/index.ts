@@ -1,4 +1,7 @@
 import { ApiTripRepository, RevisionConflictError, type TripResult } from '../../lib/trip-planner/api-repository';
+import { parseAirbnbListingHtml, type AirbnbListingImport } from '../../lib/trip-planner/airbnb';
+import { confirmedParticipantIds, selectedDateStatus } from '../../lib/trip-planner/availability';
+import { formatDate } from '../../lib/trip-planner/date';
 import type {
   AccommodationOption, ActivityOption, AvailabilitySlot, AvailabilityStatus, BedType, BaggageItem, GeoCoordinates, Participant,
   Room, TransportMode, TransportOption, Trip, TripExport, TripSession, VoteValue,
@@ -31,6 +34,12 @@ let setupDraftStart: string | undefined;
 let setupRanges: { id: string; start: string; end: string }[] = [];
 let activeDateInput: HTMLInputElement | undefined;
 let pickerMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let activeTimeInput: HTMLInputElement | undefined;
+let timePickerPhase: 'hour' | 'minute' = 'hour';
+let pickerHour = 0;
+let pickerMinute = 0;
+let dismissedAirbnbUrl = '';
+const onboardingVotingEnabled = false;
 const colours = ['#8cc5a0', '#e4bd88', '#8fb2dc', '#d99da2', '#b7c982', '#b59acb', '#83c6bf'];
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -89,8 +98,9 @@ const money = (value: number, currency: 'GBP' | 'EUR' = 'GBP') => new Intl.Numbe
   style: 'currency', currency, maximumFractionDigits: value % 1 ? 2 : 0,
 }).format(value);
 const date = (value: string, options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }) =>
-  new Intl.DateTimeFormat('en-GB', options).format(new Date(value.length === 10 ? `${value}T12:00:00` : value));
-const dateOr = (value: string | undefined, fallback = 'Date not set', options?: Intl.DateTimeFormatOptions) => value ? date(value, options) : fallback;
+  formatDate(value, options) ?? 'Date not set';
+const dateOr = (value: string | undefined, fallback = 'Date not set', options?: Intl.DateTimeFormatOptions) =>
+  value ? formatDate(value, options) ?? fallback : fallback;
 const range = (start: string, end: string) => {
   const dates: string[] = [];
   const cursor = new Date(`${start}T12:00:00Z`);
@@ -182,6 +192,15 @@ function validateForm(form: HTMLFormElement): boolean {
   return !firstInvalid;
 }
 
+function showFieldError(control: HTMLElement, message: string): void {
+  const label = control.closest('label');
+  if (!label || label.querySelector('.tp-field-error')) return;
+  const error = document.createElement('small');
+  error.className = 'tp-field-error';
+  error.textContent = message;
+  label.append(error);
+}
+
 function enhanceForms(): void {
   document.querySelectorAll<HTMLFormElement>('.trip-planner form').forEach(form => {
     form.noValidate = true;
@@ -198,7 +217,16 @@ function enhanceForms(): void {
     button.type = 'button'; button.className = 'tp-friendly-date'; button.dataset.dateFor = input.id;
     input.insertAdjacentElement('afterend', button);
   });
+  document.querySelectorAll<HTMLInputElement>('input[type="time"]:not([data-time-picker-control])').forEach((input, index) => {
+    if (input.classList.contains('tp-native-time')) return;
+    input.classList.add('tp-native-time');
+    input.id ||= `tp-friendly-time-${index}`;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'tp-friendly-time'; button.dataset.timeFor = input.id;
+    input.insertAdjacentElement('afterend', button);
+  });
   syncDateButtons();
+  syncTimeButtons();
 }
 
 function syncDateButtons(scope: ParentNode = document): void {
@@ -229,10 +257,73 @@ function openDatePicker(input: HTMLInputElement): void {
   $<HTMLDialogElement>('#tp-date-picker-dialog').showModal();
 }
 
+function syncTimeButtons(scope: ParentNode = document): void {
+  scope.querySelectorAll<HTMLInputElement>('.tp-native-time').forEach(input => {
+    const button = document.querySelector<HTMLButtonElement>(`[data-time-for="${input.id}"]`);
+    if (!button) return;
+    const [hour, minute] = input.value.split(':').map(Number);
+    button.textContent = input.value && Number.isFinite(hour) && Number.isFinite(minute)
+      ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(2000, 0, 1, hour, minute))
+      : 'Choose time';
+    button.classList.toggle('is-empty', !input.value);
+  });
+}
+
+function renderTimePicker(): void {
+  const hour12 = pickerHour % 12 || 12;
+  const display = document.querySelectorAll<HTMLButtonElement>('.tp-time-display button');
+  if (display[0]) { display[0].textContent = String(hour12).padStart(2, '0'); display[0].classList.toggle('active', timePickerPhase === 'hour'); }
+  if (display[1]) { display[1].textContent = String(pickerMinute).padStart(2, '0'); display[1].classList.toggle('active', timePickerPhase === 'minute'); }
+  document.querySelectorAll<HTMLButtonElement>('[data-time-period]').forEach(button => button.classList.toggle('active', button.dataset.timePeriod === (pickerHour < 12 ? 'am' : 'pm')));
+  const values = timePickerPhase === 'hour' ? [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] : Array.from({ length: 12 }, (_, index) => index * 5);
+  $('#tp-clock-face').innerHTML = values.map((value, index) => {
+    const angle = index * 30;
+    const selected = timePickerPhase === 'hour' ? value === hour12 : value === pickerMinute;
+    const attribute = timePickerPhase === 'hour' ? `data-clock-hour="${value}"` : `data-clock-minute="${value}"`;
+    return `<button type="button" ${attribute} class="${selected ? 'active' : ''}" style="--clock-angle:${angle}deg"><span>${String(value).padStart(2, '0')}</span></button>`;
+  }).join('') + '<i class="tp-clock-hand" aria-hidden="true"></i><i class="tp-clock-centre" aria-hidden="true"></i>';
+  const selectedIndex = timePickerPhase === 'hour' ? hour12 % 12 : pickerMinute / 5;
+  $('#tp-clock-face').style.setProperty('--hand-angle', `${selectedIndex * 30}deg`);
+  $<HTMLInputElement>('#tp-time-manual-input').value = `${String(pickerHour).padStart(2, '0')}:${String(pickerMinute).padStart(2, '0')}`;
+}
+
+function openTimePicker(input: HTMLInputElement): void {
+  activeTimeInput = input;
+  const now = new Date();
+  const [hour, minute] = input.value ? input.value.split(':').map(Number) : [now.getHours(), now.getMinutes()];
+  pickerHour = Number.isFinite(hour) ? hour : 0;
+  pickerMinute = Number.isFinite(minute) ? minute : 0;
+  timePickerPhase = 'hour';
+  renderTimePicker();
+  $<HTMLDialogElement>('#tp-time-picker-dialog').showModal();
+}
+
+function setClockFromPointer(event: MouseEvent): void {
+  const face = $('#tp-clock-face');
+  const bounds = face.getBoundingClientRect();
+  const x = event.clientX - (bounds.left + bounds.width / 2);
+  const y = event.clientY - (bounds.top + bounds.height / 2);
+  const turn = (Math.atan2(y, x) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
+  if (timePickerPhase === 'hour') {
+    const selected = Math.round(turn / (Math.PI * 2) * 12) % 12 || 12;
+    pickerHour = pickerHour >= 12 ? (selected % 12) + 12 : selected % 12;
+    timePickerPhase = 'minute';
+  } else {
+    pickerMinute = Math.round(turn / (Math.PI * 2) * 60) % 60;
+  }
+  renderTimePicker();
+}
+
 function updateTransportFields(): void {
   const form = $<HTMLFormElement>('#tp-transport-form');
   const mode = (form.elements.namedItem('mode') as HTMLSelectElement).value;
   form.querySelectorAll<HTMLElement>('[data-transport-modes]').forEach(field => { field.hidden = !field.dataset.transportModes!.split(' ').includes(mode); });
+  const isCar = mode === 'car';
+  $('#tp-transport-price-label').textContent = isCar ? 'Total hire price' : 'Price per person';
+  $('#tp-transport-origin-label').textContent = isCar ? 'Pick-up location' : 'From';
+  $('#tp-transport-destination-label').textContent = isCar ? 'Drop-off location' : 'To';
+  const price = form.elements.namedItem('price') as HTMLInputElement;
+  price.placeholder = isCar ? '420.00' : '149.00';
   updateTransportCapacityWarning();
 }
 
@@ -296,8 +387,18 @@ function selectSetupDate(value: string): void {
   renderSetupCalendar();
 }
 
+function personDateState(person: Participant): ReturnType<typeof selectedDateStatus> {
+  return trip ? selectedDateStatus(trip, person.id) : 'confirmed';
+}
+
+function personDateLabel(person: Participant): string {
+  const state = personDateState(person);
+  return state === 'confirmed' ? person.name : `${person.name} · ${state === 'unavailable' ? 'cannot make the selected dates' : 'has not confirmed the selected dates'}`;
+}
+
 function avatar(person: Participant, label = true): string {
-  return `<span class="tp-avatar-wrap" title="${escapeHtml(person.name)}"><span class="tp-avatar" style="--person:${person.colour}">${escapeHtml(person.initials)}</span>${label ? `<span>${escapeHtml(person.name)}</span>` : ''}</span>`;
+  const state = personDateState(person);
+  return `<span class="tp-avatar-wrap ${state === 'confirmed' ? '' : 'is-date-unconfirmed'}" title="${escapeHtml(personDateLabel(person))}"><span class="tp-avatar" style="--person:${person.colour}">${escapeHtml(person.initials)}</span>${label ? `<span>${escapeHtml(person.name)}</span>` : ''}</span>`;
 }
 
 function groupCouples(people: Participant[]): Participant[][] {
@@ -318,7 +419,8 @@ function renderPersonChips(people: Participant[], className = ''): string {
   if (!people.length) return '';
   return `<div class="tp-person-chip-row ${className}" aria-label="People involved">${groupCouples(people).map(group => {
     const label = group.map(person => person.name).join(' & ');
-    return `<span class="tp-person-name-chip${group.length > 1 ? ' is-couple' : ''}" title="${escapeHtml(label)}"><span class="tp-person-chip-avatars">${group.map(person => `<i style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span><b>${escapeHtml(label)}</b></span>`;
+    const unconfirmed = group.some(person => personDateState(person) !== 'confirmed');
+    return `<span class="tp-person-name-chip${group.length > 1 ? ' is-couple' : ''}${unconfirmed ? ' is-date-unconfirmed' : ''}" title="${escapeHtml(group.map(personDateLabel).join(' & '))}"><span class="tp-person-chip-avatars">${group.map(person => `<i class="${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span><b>${escapeHtml(label)}</b></span>`;
   }).join('')}</div>`;
 }
 
@@ -328,12 +430,12 @@ function isRelevantTo(option: { participantIds?: string[] }, personId: string): 
 
 function renderPlanningPersonFilter(label: string): string {
   if (planningPersonId && !trip!.participants.some(person => person.id === planningPersonId)) planningPersonId = '';
-  return `<div class="tp-itinerary-filter tp-planning-filter" aria-label="Filter ${label} by traveller"><button class="${planningPersonId ? '' : 'active'}" data-planning-person="" aria-pressed="${!planningPersonId}">Everyone</button>${trip!.participants.map(person => `<button class="${planningPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-planning-person="${person.id}" aria-pressed="${planningPersonId === person.id}"><i></i>${escapeHtml(person.name)}${person.id === session?.participantId ? ' (me)' : ''}</button>`).join('')}</div>`;
+  return `<div class="tp-itinerary-filter tp-planning-filter" aria-label="Filter ${label} by traveller"><button class="${planningPersonId ? '' : 'active'}" data-planning-person="" aria-pressed="${!planningPersonId}">Everyone</button>${trip!.participants.map(person => `<button class="${planningPersonId === person.id ? 'active' : ''} ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}" data-planning-person="${person.id}" aria-pressed="${planningPersonId === person.id}"><i></i>${escapeHtml(person.name)}${person.id === session?.participantId ? ' (me)' : ''}</button>`).join('')}</div>`;
 }
 
 function renderParticipantChecks(container: HTMLElement, selectedIds?: string[]): void {
   const selected = selectedIds ?? trip!.participants.map(person => person.id);
-  container.innerHTML = trip!.participants.map(person => `<label><input type="checkbox" name="participants" value="${person.id}" ${selected.includes(person.id) ? 'checked' : ''} />${avatar(person)}</label>`).join('');
+  container.innerHTML = trip!.participants.map(person => `<label class="${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}"><input type="checkbox" name="participants" value="${person.id}" ${selected.includes(person.id) ? 'checked' : ''} />${avatar(person)}</label>`).join('');
 }
 
 function showToast(message: string): void {
@@ -401,7 +503,7 @@ function renderAddressMap(people: Participant[]): string {
     const linkedPartner = people.find(candidate => candidate.id === person.sleepingPreferences.shareDoubleWithParticipantId)
       ?? people.find(candidate => candidate.sleepingPreferences.shareDoubleWithParticipantId === person.id);
     const sameAddressPartner = linkedPartner && linkedPartner.origin.trim().toLowerCase() === person.origin.trim().toLowerCase() ? linkedPartner.id : undefined;
-    return { id: person.id, location: person.origin, label: person.name, colour: person.colour, coupleWith: sameAddressPartner, latitude: person.originCoordinates?.latitude, longitude: person.originCoordinates?.longitude };
+    return { id: person.id, location: person.origin, label: person.name, colour: personDateState(person) === 'confirmed' ? person.colour : '#b9bfbb', coupleWith: sameAddressPartner, latitude: person.originCoordinates?.latitude, longitude: person.originCoordinates?.longitude };
   });
   const visiblePoints = points.filter(point => !hiddenIds.includes(point.id));
   const encoded = (value: unknown) => encodeURIComponent(JSON.stringify(value));
@@ -477,7 +579,15 @@ function renderOverview(): string {
     return `<article><span>${item.icon}</span><time>${item.when ? date(item.when, { weekday: 'short', day: 'numeric', month: 'short', hour: item.when.includes('T') ? '2-digit' : undefined, minute: item.when.includes('T') ? '2-digit' : undefined }) : 'Date not set'}</time><div><span class="tp-itinerary-title"><strong>${escapeHtml(item.title)}</strong><span class="tp-confirmation ${item.booked ? 'is-confirmed' : 'is-pending'}" role="img" tabindex="0" aria-label="${bookingStatus}" data-tooltip="${bookingStatus}" title="${bookingStatus}">${item.booked ? '✓' : '○'}</span></span><small>${escapeHtml(item.detail)}</small>${renderPersonChips(item.people)}</div><button class="tp-action-button tp-action-edit" type="button" ${item.editAttribute} aria-label="Edit ${escapeHtml(item.title)}">Edit</button></article>`;
   };
   const itineraryList = itineraryGroups.map(group => `<section class="tp-itinerary-group"><h3>${group.title}</h3>${group.items.length ? `<div>${group.items.map(renderItineraryItem).join('')}</div>` : `<p>${group.empty}</p>`}</section>`).join('');
-  const calendarDates = range(trip!.preferredDateRange?.start ?? trip!.dateRange.start, trip!.preferredDateRange?.end ?? trip!.dateRange.end);
+  const baseCalendarStart = trip!.preferredDateRange?.start ?? trip!.dateRange.start;
+  const baseCalendarEnd = trip!.preferredDateRange?.end ?? trip!.dateRange.end;
+  const itineraryDateKeys = [
+    baseCalendarStart, baseCalendarEnd,
+    ...transportItems.flatMap(item => [item.when?.slice(0, 10), item.endWhen?.slice(0, 10)]),
+    ...accommodationItems.flatMap(item => [item.when, item.endWhen]),
+    ...activityItems.map(item => item.when?.slice(0, 10)),
+  ].filter((value): value is string => Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value)));
+  const calendarDates = range([...itineraryDateKeys].sort()[0] ?? baseCalendarStart, [...itineraryDateKeys].sort().at(-1) ?? baseCalendarEnd);
   const calendarEvents = [...transportItems, ...activityItems].filter(item => item.when?.includes('T'));
   const minutesFromMidnight = (value: string) => Number(value.slice(11, 13)) * 60 + Number(value.slice(14, 16));
   const rawCalendarEvents = calendarEvents.flatMap(item => {
@@ -539,7 +649,7 @@ function renderOverview(): string {
   }).join('');
   const itineraryCalendar = `<div class="tp-itinerary-calendar-scroll"><div class="tp-itinerary-schedule" style="--hour-height:${hourHeight}px;grid-template-columns:58px ${dayColumns}"><div class="tp-schedule-corner"></div>${calendarDates.map(day => `<div class="tp-schedule-day-head"><span>${date(day, { weekday: 'short' })}</span><strong>${date(day, { day: 'numeric', month: 'short' })}</strong></div>`).join('')}<div class="tp-schedule-all-day-label">Stay</div><div class="tp-schedule-all-day" style="grid-template-columns:${dayColumns}">${stayBars || '<span class="tp-schedule-empty">No accommodation</span>'}</div><div class="tp-schedule-time-axis" style="height:${scheduleHeight}px">${hourLabels.map(hour => `<span style="top:${(hour - startHour) * hourHeight}px">${String(hour).padStart(2, '0')}:00</span>`).join('')}</div><div class="tp-schedule-time-grid" style="height:${scheduleHeight}px"><div class="tp-schedule-day-lines" style="grid-template-columns:${dayColumns}">${calendarDates.map(() => '<i></i>').join('')}</div>${timedEvents}</div></div></div>`;
   const itineraryContent = itineraryLayout === 'calendar' ? itineraryCalendar : `<div class="tp-itinerary-groups">${itineraryList}</div>`;
-  const itineraryFilters = `<div class="tp-itinerary-toolbar"><div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''}" style="--person:${person.colour}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div><div class="tp-itinerary-layout-toggle" aria-label="Itinerary view"><button class="${itineraryLayout === 'list' ? 'active' : ''}" data-itinerary-layout="list" aria-pressed="${itineraryLayout === 'list'}">☷ List</button><button class="${itineraryLayout === 'calendar' ? 'active' : ''}" data-itinerary-layout="calendar" aria-pressed="${itineraryLayout === 'calendar'}">▦ Calendar</button></div></div>`;
+  const itineraryFilters = `<div class="tp-itinerary-toolbar"><div class="tp-itinerary-filter" aria-label="Filter itinerary by traveller"><button class="${itineraryPersonId ? '' : 'active'}" data-itinerary-person="" aria-pressed="${!itineraryPersonId}">Everyone</button>${people.map(person => `<button class="${itineraryPersonId === person.id ? 'active' : ''} ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}" data-itinerary-person="${person.id}" aria-pressed="${itineraryPersonId === person.id}"><i></i>${escapeHtml(person.name)}</button>`).join('')}</div><div class="tp-itinerary-layout-toggle" aria-label="Itinerary view"><button class="${itineraryLayout === 'list' ? 'active' : ''}" data-itinerary-layout="list" aria-pressed="${itineraryLayout === 'list'}">☷ List</button><button class="${itineraryLayout === 'calendar' ? 'active' : ''}" data-itinerary-layout="calendar" aria-pressed="${itineraryLayout === 'calendar'}">▦ Calendar</button></div></div>`;
   const mapPoint = (location: string | undefined, coordinates?: GeoCoordinates): Exclude<MapPoint, string> | undefined => location?.trim() ? { location: location.trim(), latitude: coordinates?.latitude, longitude: coordinates?.longitude } : undefined;
   const mappedRoutes = itineraryTransport.flatMap(option => {
     const from = mapPoint(option.origin, option.originCoordinates);
@@ -659,28 +769,33 @@ function renderTransport(): string {
     const baggageTotal = baggage.reduce((total, row) => total + (row.rule?.price ?? 0), 0);
     const ownVote = option.votes[session!.participantId];
     const route = option.origin || option.destination ? `<div class="tp-route"><div><strong>${option.departureAt ? date(option.departureAt, { hour: '2-digit', minute: '2-digit' }) : '—'}</strong><span>${escapeHtml(option.origin || 'From not added')}</span></div><i></i><div><strong>${option.arrivalAt ? date(option.arrivalAt, { hour: '2-digit', minute: '2-digit' }) : '—'}</strong><span>${escapeHtml(option.destination || 'To not added')}</span></div></div>` : '';
-    const priceDetail = baggageTotal ? `+ ${money(baggageTotal / Math.max(people.length, 1), option.currency)} average baggage` : option.pricePerPerson ? 'No paid bags matched' : 'Price not added';
+    const carTotal = option.mode === 'car' ? option.priceTotal ?? option.pricePerPerson : 0;
+    const displayedPrice = option.mode === 'car' ? carTotal : option.pricePerPerson;
+    const priceLabel = option.mode === 'car' ? 'total hire price' : 'per person';
+    const priceDetail = option.mode === 'car'
+      ? carTotal ? `${money(carTotal / Math.max(people.length, 1), option.currency)} each for ${Math.max(people.length, 1)} traveller${people.length === 1 ? '' : 's'}` : 'Price not added'
+      : baggageTotal ? `+ ${money(baggageTotal / Math.max(people.length, 1), option.currency)} average baggage` : option.pricePerPerson ? 'No paid bags matched' : 'Price not added';
     const capacityWarning = option.mode === 'car' && option.seats && people.length > option.seats
       ? `<p class="tp-capacity-warning">${people.length} travellers for ${option.seats} seats — this car is over capacity.</p>`
       : option.mode === 'car' && option.seats ? `<p class="tp-seat-count">${option.seats} seat${option.seats === 1 ? '' : 's'}</p>` : '';
     const actions = `<div class="tp-option-actions"><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-transport="${option.id}">${option.status === 'selected' ? 'Unselect' : 'Select option'}</button><button class="tp-action-button tp-action-edit" data-edit-transport="${option.id}">Edit</button><button class="tp-action-button tp-action-delete" data-remove-transport="${option.id}">Delete</button></div>`;
-    return `<article class="tp-transport-card"><div class="tp-mode-icon">${iconForMode[option.mode]}</div><div class="tp-transport-main"><div class="tp-card-topline"><span class="tp-status-pill tp-status-${option.status}">${option.status}</span>${option.operator ? `<span>${escapeHtml(option.operator)}</span>` : ''}</div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><div class="tp-transport-heading"><h2>${escapeHtml(option.title)}</h2><div class="tp-transport-price"><strong>${option.pricePerPerson ? money(option.pricePerPerson, option.currency) : '—'}</strong><span>per person · ${priceDetail}</span></div></div>${route}${capacityWarning}${renderPersonChips(people)}${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}</div><div class="tp-option-poll">${renderVoteChart(option)}<div class="tp-vote-buttons"><button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div>${actions}</div>${option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : ''}</article>`;
+    return `<article class="tp-transport-card"><div class="tp-mode-icon">${iconForMode[option.mode]}</div><div class="tp-transport-main"><div class="tp-card-topline"><span class="tp-status-pill tp-status-${option.status}">${option.status}</span>${option.operator ? `<span>${escapeHtml(option.operator)}</span>` : ''}</div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><div class="tp-transport-heading"><h2>${escapeHtml(option.title)}</h2><div class="tp-transport-price"><strong>${displayedPrice ? money(displayedPrice, option.currency) : '—'}</strong><span>${priceLabel} · ${priceDetail}</span></div></div>${route}${capacityWarning}${renderPersonChips(people)}${option.notes ? `<p class="tp-transport-notes">${escapeHtml(option.notes)}</p>` : ''}${option.bookingUrl ? `<p><a href="${escapeHtml(option.bookingUrl)}" target="_blank" rel="noopener">Open listing or booking page ↗</a></p>` : ''}${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}</div><div class="tp-option-poll">${renderVoteChart(option)}<div class="tp-vote-buttons"><button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div>${actions}</div>${option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : ''}</article>`;
   }).join('')}</div>` : allOptions.length ? '<section class="tp-filter-empty"><p>No transport options involve this traveller.</p></section>' : emptyState('✈', 'No routes yet', 'Add a flight, train, coach, car or ferry. Assign the people taking it and enter operator baggage prices.', 'Add first transport option', 'id="tp-add-transport"');
   const addButton = '<button class="tp-button tp-button-primary" data-add-transport>+ Add transport</button>';
   return `${sectionHeading('', 'Transport', '', allOptions.length ? addButton : '')}${allOptions.length ? renderPlanningPersonFilter('transport') : ''}${content}${allOptions.length ? `<div class="tp-page-add-action">${addButton}</div>` : ''}`;
 }
 
-function countVotes(option: { votes: Record<string, VoteValue> }, vote: VoteValue): number { return Object.values(option.votes).filter(value => value === vote).length; }
-
-function renderVoteChart(option: { votes: Record<string, VoteValue> }): string {
+function renderVoteChart(option: { votes: Record<string, VoteValue>; participantIds?: string[] }): string {
+  const eligiblePeople = option.participantIds === undefined ? trip!.participants : trip!.participants.filter(person => option.participantIds!.includes(person.id));
   const results = [
     { key: 'first-choice' as const, label: 'Love it', className: 'is-love' },
     { key: 'acceptable' as const, label: 'Works', className: 'is-works' },
     { key: 'unacceptable' as const, label: 'No', className: 'is-no' },
-  ].map(result => ({ ...result, count: countVotes(option, result.key) }));
-  const total = results.reduce((sum, result) => sum + result.count, 0);
-  const summary = results.map(result => `${result.label}: ${result.count}`).join(', ');
-  return `<div class="tp-vote-chart" role="img" aria-label="Votes — ${summary}"><div class="tp-vote-bar">${results.map(result => `<span class="${result.className}" style="--votes:${total ? result.count / total : 0}" title="${result.label}: ${result.count}"></span>`).join('')}</div><div class="tp-vote-legend">${results.map(result => `<span class="${result.className}"><i></i>${result.label}<b>${result.count}</b></span>`).join('')}</div></div>`;
+  ].map(result => ({ ...result, people: eligiblePeople.filter(person => option.votes[person.id] === result.key) }));
+  const awaiting = eligiblePeople.filter(person => !option.votes[person.id]);
+  const summary = results.map(result => `${result.label}: ${result.people.length}`).join(', ');
+  const voterChip = (person: Participant) => `<span class="tp-voter-chip ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}"><i>${escapeHtml(person.initials)}</i><b>${escapeHtml(person.name)}</b></span>`;
+  return `<div class="tp-vote-chart" aria-label="Votes — ${summary}"><div class="tp-vote-columns">${results.map(result => `<section class="${result.className}"><div class="tp-vote-stack">${result.people.map(voterChip).join('') || '<span class="tp-no-votes">No votes</span>'}</div><footer><strong>${result.label}</strong><b>${result.people.length}</b></footer></section>`).join('')}</div>${awaiting.length ? `<div class="tp-awaiting-votes"><span>Awaiting vote</span>${awaiting.map(voterChip).join('')}</div>` : ''}</div>`;
 }
 
 function allowsDoubleShare(person: Participant, other: Participant): boolean {
@@ -791,7 +906,7 @@ function renderRoomPlan(rooms: Room[], people: Participant[]): string {
     const bedDescription = bedLabel.endsWith('bed') ? bedLabel : `${bedLabel} bed`;
     const occupantNames = occupants.length ? occupants.map(person => person.name).join(' and ') : 'Unassigned';
     const sizeClass = bed.type === 'double' || bed.type === 'king' ? 'is-double' : 'is-single';
-    return `<span class="tp-bed"><span class="tp-bed-icon ${sizeClass}" role="img" aria-label="${escapeHtml(`${bedDescription}: ${occupantNames}`)}" title="${escapeHtml(occupantNames)}"><span class="tp-bed-people">${occupants.map(person => `<i style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span></span><small>${escapeHtml(bedLabel)}</small></span>`;
+    return `<span class="tp-bed"><span class="tp-bed-icon ${sizeClass}" role="img" aria-label="${escapeHtml(`${bedDescription}: ${occupantNames}`)}" title="${escapeHtml(occupantNames)}"><span class="tp-bed-people">${occupants.map(person => `<i class="${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span></span><small>${escapeHtml(bedLabel)}</small></span>`;
   }).join('') : '<span class="tp-no-beds">No beds added</span>'}</div></section>`).join('');
   const warning = unassigned.length ? `<div class="tp-room-plan-warning"><strong>Bed assignment issue</strong>${unassigned.map(person => `<p>${escapeHtml(unassignedBedReason(person, rooms, assignments))}</p>`).join('')}</div>` : '';
   return `<div class="tp-room-plan-list"><p class="tp-room-plan-intro">Suggested room plan based on sleeping preferences</p>${roomCards}${warning}</div>`;
@@ -972,11 +1087,11 @@ function openTransportDialog(id?: string): void {
   renderParticipantChecks($('#tp-person-checks'), option?.participantIds);
   if (option) {
     hidden.value = option.id;
-    for (const [name, value] of Object.entries({ title: option.title, mode: option.mode, operator: option.operator, seats: option.seats ?? '', price: option.pricePerPerson || '', origin: option.origin, destination: option.destination, departureDate: option.departureAt.slice(0, 10), departureTime: option.departureAt.slice(11, 16), arrivalDate: option.arrivalAt.slice(0, 10), arrivalTime: option.arrivalAt.slice(11, 16), checkedPrice: option.baggageRules.find(rule => /checked/i.test(rule.label))?.price ?? '', sportsPrice: option.baggageRules.find(rule => /sport/i.test(rule.label))?.price ?? '', checkedMax: option.baggageRules.find(rule => /checked/i.test(rule.label))?.maxWeightKg ?? '', sportsMax: option.baggageRules.find(rule => /sport/i.test(rule.label))?.maxWeightKg ?? '', baggageUrl: option.baggageRules[0]?.sourceUrl ?? '', bookingReference: option.bookingReference ?? '' })) (form.elements.namedItem(name) as HTMLInputElement).value = String(value);
+    for (const [name, value] of Object.entries({ title: option.title, mode: option.mode, operator: option.operator, seats: option.seats ?? '', price: option.mode === 'car' ? (option.priceTotal ?? option.pricePerPerson) || '' : option.pricePerPerson || '', origin: option.origin, destination: option.destination, departureDate: option.departureAt.slice(0, 10), departureTime: option.departureAt.slice(11, 16), arrivalDate: option.arrivalAt.slice(0, 10), arrivalTime: option.arrivalAt.slice(11, 16), checkedPrice: option.baggageRules.find(rule => /checked/i.test(rule.label))?.price ?? '', sportsPrice: option.baggageRules.find(rule => /sport/i.test(rule.label))?.price ?? '', checkedMax: option.baggageRules.find(rule => /checked/i.test(rule.label))?.maxWeightKg ?? '', sportsMax: option.baggageRules.find(rule => /sport/i.test(rule.label))?.maxWeightKg ?? '', baggageUrl: option.baggageRules[0]?.sourceUrl ?? '', bookingUrl: option.bookingUrl ?? '', notes: option.notes ?? '', bookingReference: option.bookingReference ?? '' })) (form.elements.namedItem(name) as HTMLInputElement).value = String(value);
     setLocationField(form, 'origin', option.origin, option.originCoordinates);
     setLocationField(form, 'destination', option.destination, option.destinationCoordinates);
   }
-  updateTransportFields(); syncDateButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
+  updateTransportFields(); syncDateButtons(form); syncTimeButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
   $<HTMLDialogElement>('#tp-transport-dialog').showModal();
 }
 
@@ -999,11 +1114,17 @@ function addTravelTimeEditor(item?: { site: string; minutes: number; coordinates
 function openStayDialog(id?: string): void {
   const form = $('#tp-stay-form') as HTMLFormElement;
   form.reset();
+  (form.elements.namedItem('id') as HTMLInputElement).value = '';
   $('#tp-room-editor').innerHTML = '';
   $('#tp-travel-time-editor').innerHTML = '';
   const option = trip!.accommodationOptions.find(candidate => candidate.id === id);
-  renderParticipantChecks($('#tp-stay-person-checks'), option?.participantIds);
+  renderParticipantChecks($('#tp-stay-person-checks'), option ? option.participantIds : confirmedParticipantIds(trip!));
   setLocationField(form, 'location');
+  dismissedAirbnbUrl = '';
+  $('#tp-airbnb-import-prompt').hidden = true;
+  $('#tp-airbnb-import-status').textContent = 'Airbnb link detected. Auto-populate its name, location, rooms and beds?';
+  $<HTMLButtonElement>('#tp-import-airbnb').hidden = false;
+  $<HTMLButtonElement>('#tp-dismiss-airbnb').hidden = false;
   form.querySelector('h2')!.textContent = option ? 'Edit accommodation' : 'Add accommodation';
   if (option) {
     for (const [name, value] of Object.entries({ id: option.id, name: option.name, location: option.location, price: option.priceTotal || '', checkIn: option.checkIn, checkOut: option.checkOut, url: option.sourceUrl, notes: option.notes ?? '', bookingReference: option.bookingReference ?? '' })) (form.elements.namedItem(name) as HTMLInputElement).value = String(value);
@@ -1020,6 +1141,63 @@ function openStayDialog(id?: string): void {
   $<HTMLDialogElement>('#tp-stay-dialog').showModal();
 }
 
+function airbnbListingUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && /^(?:[a-z0-9-]+\.)?airbnb\.(?:com|co\.uk|[a-z]{2})$/i.test(url.hostname)
+      && /^\/rooms\/\d+/.test(url.pathname);
+  } catch { return false; }
+}
+
+function updateAirbnbImportPrompt(value: string): void {
+  const url = value.trim();
+  const prompt = $('#tp-airbnb-import-prompt');
+  if (!airbnbListingUrl(url) || url === dismissedAirbnbUrl) { prompt.hidden = true; return; }
+  prompt.hidden = false;
+  $('#tp-airbnb-import-status').textContent = 'Airbnb link detected. Auto-populate its name, location, rooms and beds?';
+  $<HTMLButtonElement>('#tp-import-airbnb').hidden = false;
+  $<HTMLButtonElement>('#tp-dismiss-airbnb').hidden = false;
+}
+
+async function importAirbnbListing(): Promise<void> {
+  const form = $<HTMLFormElement>('#tp-stay-form');
+  const url = (form.elements.namedItem('url') as HTMLInputElement).value.trim();
+  const status = $('#tp-airbnb-import-status');
+  const button = $<HTMLButtonElement>('#tp-import-airbnb');
+  if (!url) { status.textContent = 'Paste an Airbnb listing URL first.'; return; }
+  button.disabled = true;
+  status.textContent = 'Reading the listing…';
+  try {
+    let listing: AirbnbListingImport | undefined;
+    try {
+      const direct = await fetch(url, { credentials: 'include', headers: { accept: 'text/html' } });
+      if (direct.ok) listing = parseAirbnbListingHtml(await direct.text());
+    } catch { /* Airbnb currently omits CORS headers, so use the same-origin fallback below. */ }
+    if (!listing?.name && !listing?.rooms.length) {
+      const response = await fetch(`${appBase}/api/airbnb`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+      const result = await response.json() as { listing?: AirbnbListingImport; error?: string };
+      if (!response.ok || !result.listing) throw new Error(result.error || 'The listing could not be imported.');
+      listing = result.listing;
+    }
+    const name = form.elements.namedItem('name') as HTMLInputElement;
+    const location = form.elements.namedItem('location') as HTMLInputElement;
+    const filled: string[] = [];
+    const preserved: string[] = [];
+    if (!name.value.trim() && listing.name) { name.value = listing.name; filled.push('name'); } else if (listing.name) preserved.push('name');
+    if (!location.value.trim() && listing.location) { setLocationField(form, 'location', listing.location); filled.push('location'); } else if (listing.location) preserved.push('location');
+    if (!$('#tp-room-editor').children.length && listing.rooms.length) { listing.rooms.forEach(addRoomEditor); filled.push(`${listing.rooms.length} room${listing.rooms.length === 1 ? '' : 's'}`); }
+    else if (listing.rooms.length) preserved.push('existing room details');
+    status.textContent = filled.length
+      ? `Imported ${filled.join(', ')}.${preserved.length ? ` Kept your ${preserved.join(' and ')}.` : ''} Review everything before saving.`
+      : 'The listing was read, but your existing details were kept. Clear a field or the room list before importing it again.';
+    button.hidden = true;
+    $<HTMLButtonElement>('#tp-dismiss-airbnb').hidden = true;
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : 'The listing could not be imported. Enter its details manually.';
+  } finally { button.disabled = false; }
+}
+
 function openActivityDialog(id?: string): void {
   const form = $<HTMLFormElement>('#tp-activity-form');
   form.reset();
@@ -1032,7 +1210,7 @@ function openActivityDialog(id?: string): void {
     for (const [name, value] of Object.entries({ id: option.id, name: option.name, category: option.category ?? '', location: option.location ?? '', cost: option.costPerPerson || '', date: option.date ?? '', time: option.time ?? '', url: option.sourceUrl ?? '', notes: option.notes ?? '' })) (form.elements.namedItem(name) as HTMLInputElement).value = String(value);
     setLocationField(form, 'location', option.location ?? '', option.locationCoordinates);
   }
-  syncDateButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
+  syncDateButtons(form); syncTimeButtons(form); form.querySelectorAll('.tp-field-error').forEach(error => error.remove());
   $<HTMLDialogElement>('#tp-activity-dialog').showModal();
 }
 
@@ -1069,13 +1247,31 @@ async function savePerson(form: HTMLFormElement): Promise<void> {
 
 async function saveTransport(form: HTMLFormElement): Promise<void> {
   if (!validateForm(form)) return;
+  const scheduleFields = {
+    departureDate: form.elements.namedItem('departureDate') as HTMLInputElement,
+    departureTime: form.elements.namedItem('departureTime') as HTMLInputElement,
+    arrivalDate: form.elements.namedItem('arrivalDate') as HTMLInputElement,
+    arrivalTime: form.elements.namedItem('arrivalTime') as HTMLInputElement,
+  };
+  let scheduleValid = true;
+  for (const [dateField, timeField] of [[scheduleFields.departureDate, scheduleFields.departureTime], [scheduleFields.arrivalDate, scheduleFields.arrivalTime]]) {
+    if (dateField.value && !timeField.value) { showFieldError(timeField, 'Choose a time.'); scheduleValid = false; }
+    if (timeField.value && !dateField.value) { showFieldError(dateField, 'Choose a date.'); scheduleValid = false; }
+  }
+  if (scheduleFields.departureDate.value && scheduleFields.departureTime.value && scheduleFields.arrivalDate.value && scheduleFields.arrivalTime.value) {
+    const departure = `${scheduleFields.departureDate.value}T${scheduleFields.departureTime.value}`;
+    const arrival = `${scheduleFields.arrivalDate.value}T${scheduleFields.arrivalTime.value}`;
+    if (arrival < departure) { showFieldError(scheduleFields.arrivalTime, 'Arrival must be after departure.'); scheduleValid = false; }
+  }
+  if (!scheduleValid) return;
   const data = new FormData(form); const url = String(data.get('baggageUrl')); const rules: TransportOption['baggageRules'] = [];
   if (Number(data.get('checkedPrice'))) rules.push({ label: 'Checked bag', maxWeightKg: Number(data.get('checkedMax')) || undefined, price: Number(data.get('checkedPrice')), currency: trip!.currency, sourceUrl: url, checkedAt: new Date().toISOString().slice(0, 10) });
   if (Number(data.get('sportsPrice'))) rules.push({ label: 'Sports equipment', maxWeightKg: Number(data.get('sportsMax')) || undefined, price: Number(data.get('sportsPrice')), currency: trip!.currency, sourceUrl: url, checkedAt: new Date().toISOString().slice(0, 10) });
   const id = String(data.get('id') || `transport-${crypto.randomUUID()}`); const existing = trip!.transportOptions.find(option => option.id === id);
   const combineDateTime = (day: FormDataEntryValue | null, time: FormDataEntryValue | null) => String(day || '') ? `${String(day)}T${String(time || '00:00')}` : '';
   const mode = String(data.get('mode')) as TransportMode;
-  const option: TransportOption = { id, mode, status: existing?.status ?? 'idea', title: String(data.get('title')), operator: String(data.get('operator') || ''), origin: String(data.get('origin') || ''), originCoordinates: coordinatesFromForm(data, 'origin'), destination: String(data.get('destination') || ''), destinationCoordinates: coordinatesFromForm(data, 'destination'), departureAt: combineDateTime(data.get('departureDate'), data.get('departureTime')), arrivalAt: combineDateTime(data.get('arrivalDate'), data.get('arrivalTime')), participantIds: data.getAll('participants').map(String), seats: mode === 'car' ? Number(data.get('seats')) || undefined : undefined, pricePerPerson: Number(data.get('price')) || 0, currency: trip!.currency, baggageRules: rules, votes: existing?.votes ?? {}, bookingReference: String(data.get('bookingReference')) || undefined };
+  const price = Number(data.get('price')) || 0;
+  const option: TransportOption = { id, mode, status: existing?.status ?? 'idea', title: String(data.get('title')), operator: String(data.get('operator') || ''), origin: String(data.get('origin') || ''), originCoordinates: coordinatesFromForm(data, 'origin'), destination: String(data.get('destination') || ''), destinationCoordinates: coordinatesFromForm(data, 'destination'), departureAt: combineDateTime(data.get('departureDate'), data.get('departureTime')), arrivalAt: combineDateTime(data.get('arrivalDate'), data.get('arrivalTime')), participantIds: data.getAll('participants').map(String), seats: mode === 'car' ? Number(data.get('seats')) || undefined : undefined, pricePerPerson: mode === 'car' ? 0 : price, priceTotal: mode === 'car' ? price : undefined, currency: trip!.currency, bookingUrl: String(data.get('bookingUrl') || '') || undefined, baggageRules: rules, notes: String(data.get('notes') || '') || undefined, votes: existing?.votes ?? {}, bookingReference: String(data.get('bookingReference')) || undefined };
   closeDialogs(); await mutate(() => repository.saveTransportOption(trip!.id, option), 'Transport option saved.');
 }
 
@@ -1089,8 +1285,8 @@ async function saveStay(form: HTMLFormElement): Promise<void> {
     private: roomElement.querySelector<HTMLInputElement>('[name="roomPrivate"]')!.checked,
     beds: [...roomElement.querySelectorAll<HTMLElement>('[data-bed-id]')].map(bedElement => ({ id: bedElement.dataset.bedId!, type: bedElement.querySelector<HTMLSelectElement>('[name="bedType"]')!.value as BedType, sleeps: Number(bedElement.querySelector<HTMLInputElement>('[name="bedSleeps"]')!.value) || 1 })),
   }));
-  const travellerCount = participantIds.length || trip!.participants.length;
-  const spaces = rooms.flatMap(room => room.beds).reduce((total, bed) => total + bed.sleeps, 0); const hasSofa = rooms.some(room => room.beds.some(bed => bed.type === 'sofa-bed')); const fitLevel = !rooms.length ? 'compromise' : spaces < travellerCount ? 'invalid' : hasSofa ? 'compromise' : 'good';
+  const travellerCount = participantIds.length;
+  const spaces = rooms.flatMap(room => room.beds).reduce((total, bed) => total + bed.sleeps, 0); const hasSofa = rooms.some(room => room.beds.some(bed => bed.type === 'sofa-bed')); const fitLevel = !rooms.length || !travellerCount ? 'compromise' : spaces < travellerCount ? 'invalid' : hasSofa ? 'compromise' : 'good';
   const siteDistances = [...form.querySelectorAll<HTMLElement>('.tp-travel-time-row')].map(row => {
     const site = row.querySelector<HTMLInputElement>('[name="travelPlace"]')!.value.trim();
     const latitudeValue = row.querySelector<HTMLInputElement>('[data-location-lat]')?.value ?? '';
@@ -1102,13 +1298,16 @@ async function saveStay(form: HTMLFormElement): Promise<void> {
   const sourceUrl = String(data.get('url') || '');
   let platform = '';
   try { platform = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : ''; } catch { platform = ''; }
-  const fitSummary = !rooms.length ? 'Room and bed details have not been added yet.' : spaces < travellerCount ? `${spaces} sleeping spaces for ${travellerCount} people — this does not fit the relevant group.` : hasSofa ? 'Fits the relevant group, but uses a sofa bed. Check this against everyone’s preferences.' : `Fits all ${travellerCount} relevant travellers without using a sofa bed.`;
+  const fitSummary = !travellerCount ? 'No travellers are selected for this accommodation yet.' : !rooms.length ? 'Room and bed details have not been added yet.' : spaces < travellerCount ? `${spaces} sleeping spaces for ${travellerCount} people — this does not fit the relevant group.` : hasSofa ? 'Fits the relevant group, but uses a sofa bed. Check this against everyone’s preferences.' : `Fits all ${travellerCount} relevant travellers without using a sofa bed.`;
   const option: AccommodationOption = { id, status: existing?.status ?? 'shortlisted', participantIds, name: String(data.get('name')), platform, sourceUrl, location: String(data.get('location') || ''), locationCoordinates: coordinatesFromForm(data, 'location'), priceTotal: Number(data.get('price')) || 0, currency: trip!.currency, checkIn: String(data.get('checkIn') || ''), checkOut: String(data.get('checkOut') || ''), walkToPrimarySiteMinutes: siteDistances.find(item => /main activity/i.test(item.site))?.minutes ?? 0, siteDistances, rooms, votes: existing?.votes ?? {}, fitSummary, fitLevel, notes: String(data.get('notes')), bookingReference: String(data.get('bookingReference')) || undefined };
   closeDialogs(); await mutate(() => repository.saveAccommodationOption(trip!.id, option), 'Accommodation saved.');
 }
 
 async function saveActivity(form: HTMLFormElement): Promise<void> {
   if (!validateForm(form)) return;
+  const activityTime = form.elements.namedItem('time') as HTMLInputElement;
+  const activityDate = form.elements.namedItem('date') as HTMLInputElement;
+  if (activityTime.value && !activityDate.value) { showFieldError(activityDate, 'Choose a date for this time.'); return; }
   const data = new FormData(form);
   const id = String(data.get('id') || `activity-${crypto.randomUUID()}`);
   const existing = trip!.activities.find(option => option.id === id);
@@ -1141,9 +1340,11 @@ function relevantParticipantOptions<T extends { participantIds?: string[] }>(opt
 function buildOnboardingSteps(): OnboardingStep[] {
   const steps: OnboardingStep[] = ['details'];
   if (trip!.availabilityRanges.length) steps.push('availability');
-  if (relevantParticipantOptions(trip!.transportOptions).length) steps.push('transport');
-  if (relevantParticipantOptions(trip!.accommodationOptions).length) steps.push('stays');
-  if (relevantParticipantOptions(trip!.activities).length) steps.push('activities');
+  if (onboardingVotingEnabled) {
+    if (relevantParticipantOptions(trip!.transportOptions).length) steps.push('transport');
+    if (relevantParticipantOptions(trip!.accommodationOptions).length) steps.push('stays');
+    if (relevantParticipantOptions(trip!.activities).length) steps.push('activities');
+  }
   steps.push('complete');
   return steps;
 }
@@ -1193,7 +1394,7 @@ function renderOnboarding(): void {
     body.innerHTML = `<p class="tp-onboarding-intro">Answer for every ${ranges.length === 1 ? 'day' : 'date option'}. You can change these later from the Availability page.</p><div class="tp-onboarding-option-list">${availabilityOptions.map(option => `<fieldset class="tp-onboarding-option"><legend>${option.legend}</legend><div class="tp-onboarding-option-title"><strong>${option.title}</strong>${option.detail ? `<span>${option.detail}</span>` : ''}</div><div class="tp-onboarding-binary"><label><input type="radio" name="availability:${escapeHtml(option.key)}" value="available" ${option.available ? 'checked' : ''} /><span>✓ I can make it</span></label><label><input type="radio" name="availability:${escapeHtml(option.key)}" value="unavailable" /><span>× I can’t make it</span></label></div></fieldset>`).join('')}</div>`;
   } else if (step === 'transport') {
     const options = relevantParticipantOptions(trip!.transportOptions);
-    body.innerHTML = `<p class="tp-onboarding-intro">Tell the organiser which journeys assigned to you work for you.</p><div class="tp-onboarding-option-list">${options.map(option => `<fieldset class="tp-onboarding-option"><legend>${iconForMode[option.mode]} ${escapeHtml(option.mode)}</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.title)}</strong><span>${escapeHtml([option.origin, option.destination].filter(Boolean).join(' → ') || 'Route not added')}${option.pricePerPerson ? ` · ${money(option.pricePerPerson, option.currency)}` : ''}</span></div>${voteChoices('transport', option.id, option.votes[person.id])}</fieldset>`).join('')}</div>`;
+    body.innerHTML = `<p class="tp-onboarding-intro">Tell the organiser which journeys assigned to you work for you.</p><div class="tp-onboarding-option-list">${options.map(option => { const price = option.mode === 'car' ? option.priceTotal ?? option.pricePerPerson : option.pricePerPerson; return `<fieldset class="tp-onboarding-option"><legend>${iconForMode[option.mode]} ${escapeHtml(option.mode)}</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.title)}</strong><span>${escapeHtml([option.origin, option.destination].filter(Boolean).join(' → ') || 'Route not added')}${price ? ` · ${money(price, option.currency)}${option.mode === 'car' ? ' total' : ''}` : ''}</span></div>${voteChoices('transport', option.id, option.votes[person.id])}</fieldset>`; }).join('')}</div>`;
   } else if (step === 'stays') {
     const options = relevantParticipantOptions(trip!.accommodationOptions);
     body.innerHTML = `<p class="tp-onboarding-intro">Vote on each accommodation option that includes you.</p><div class="tp-onboarding-option-list">${options.map(option => `<fieldset class="tp-onboarding-option"><legend>Stay</legend><div class="tp-onboarding-option-title"><strong>${escapeHtml(option.name)}</strong><span>${escapeHtml(option.location || 'Location not added')}${option.priceTotal ? ` · ${money(option.priceTotal / Math.max(option.participantIds?.length || trip!.participants.length, 1), option.currency)} per person` : ''}</span></div>${voteChoices('stay', option.id, option.votes[person.id])}</fieldset>`).join('')}</div>`;
@@ -1205,8 +1406,11 @@ function renderOnboarding(): void {
   }
 
   const back = $<HTMLButtonElement>('#tp-onboarding-back');
+  const later = $<HTMLButtonElement>('#tp-onboarding-later');
   const next = $<HTMLButtonElement>('#tp-onboarding-next');
   back.hidden = onboardingStepIndex === 0 || step === 'complete';
+  later.hidden = step === 'complete';
+  later.textContent = step === 'details' ? 'I’ll do this later' : 'I’ll vote later';
   next.textContent = step === 'complete' ? 'Enter trip' : 'Save and continue';
 }
 
@@ -1412,10 +1616,21 @@ export async function mountTripPlanner(): Promise<void> {
     finally { button.disabled = false; if ($<HTMLDialogElement>('#tp-onboarding-dialog').open) button.textContent = onboardingSteps[onboardingStepIndex] === 'complete' ? 'Enter trip' : 'Save and continue'; }
   });
   $('#tp-onboarding-back').addEventListener('click', () => { if (onboardingStepIndex > 0) { onboardingStepIndex -= 1; renderOnboarding(); } });
+  $('#tp-onboarding-later').addEventListener('click', () => {
+    if (onboardingStepIndex < onboardingSteps.length - 1) onboardingStepIndex += 1;
+    renderOnboarding();
+  });
 
   $('#tp-export').addEventListener('click', exportCurrentTrip);
 
   $('#trip-planner-root').addEventListener('input', event => {
+    const manualTime = (event.target as HTMLElement).closest<HTMLInputElement>('#tp-time-manual-input');
+    if (manualTime?.value) {
+      const [hour, minute] = manualTime.value.split(':').map(Number);
+      pickerHour = hour; pickerMinute = minute; renderTimePicker(); return;
+    }
+    const listingUrl = (event.target as HTMLElement).closest<HTMLInputElement>('#tp-stay-form input[name="url"]');
+    if (listingUrl) { updateAirbnbImportPrompt(listingUrl.value); return; }
     const input = (event.target as HTMLElement).closest<HTMLInputElement>('[data-location-input]');
     if (!input?.form) return;
     const field = input.closest<HTMLElement>('.tp-location-field');
@@ -1484,6 +1699,15 @@ export async function mountTripPlanner(): Promise<void> {
       setLocationInput(input, result.location, { latitude: result.latitude, longitude: result.longitude });
       return;
     }
+    const timeButton = target.closest<HTMLButtonElement>('[data-time-for]'); if (timeButton?.dataset.timeFor) { openTimePicker(document.getElementById(timeButton.dataset.timeFor) as HTMLInputElement); return; }
+    const timePhase = target.closest<HTMLButtonElement>('[data-time-phase]'); if (timePhase?.dataset.timePhase) { timePickerPhase = timePhase.dataset.timePhase as 'hour' | 'minute'; renderTimePicker(); return; }
+    const timePeriod = target.closest<HTMLButtonElement>('[data-time-period]'); if (timePeriod?.dataset.timePeriod) { pickerHour = (pickerHour % 12) + (timePeriod.dataset.timePeriod === 'pm' ? 12 : 0); renderTimePicker(); return; }
+    const clockHour = target.closest<HTMLButtonElement>('[data-clock-hour]'); if (clockHour?.dataset.clockHour) { const hour = Number(clockHour.dataset.clockHour) % 12; pickerHour = hour + (pickerHour >= 12 ? 12 : 0); timePickerPhase = 'minute'; renderTimePicker(); return; }
+    const clockMinute = target.closest<HTMLButtonElement>('[data-clock-minute]'); if (clockMinute?.dataset.clockMinute) { pickerMinute = Number(clockMinute.dataset.clockMinute); renderTimePicker(); return; }
+    const clockFace = target.closest<HTMLElement>('#tp-clock-face'); if (clockFace && !target.closest('button')) { setClockFromPointer(event as MouseEvent); return; }
+    if (target.closest('#tp-time-picker-apply') && activeTimeInput) { activeTimeInput.value = `${String(pickerHour).padStart(2, '0')}:${String(pickerMinute).padStart(2, '0')}`; activeTimeInput.dispatchEvent(new Event('change', { bubbles: true })); syncTimeButtons(); $<HTMLDialogElement>('#tp-time-picker-dialog').close(); return; }
+    if (target.closest('#tp-time-picker-clear') && activeTimeInput) { activeTimeInput.value = ''; syncTimeButtons(); $<HTMLDialogElement>('#tp-time-picker-dialog').close(); return; }
+    if (target.closest('#tp-time-picker-cancel, #tp-time-picker-close')) { $<HTMLDialogElement>('#tp-time-picker-dialog').close(); return; }
     const dateButton = target.closest<HTMLButtonElement>('[data-date-for]'); if (dateButton?.dataset.dateFor) { const input = document.getElementById(dateButton.dataset.dateFor) as HTMLInputElement; openDatePicker(input); return; }
     const pickerDate = target.closest<HTMLButtonElement>('[data-picker-date]'); if (pickerDate?.dataset.pickerDate && activeDateInput) { activeDateInput.value = pickerDate.dataset.pickerDate; activeDateInput.dispatchEvent(new Event('change', { bubbles: true })); syncDateButtons(); $<HTMLDialogElement>('#tp-date-picker-dialog').close(); return; }
     if (target.closest('#tp-picker-prev')) { pickerMonth = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() - 1, 1); renderSingleMonthPicker(); return; }
@@ -1520,6 +1744,12 @@ export async function mountTripPlanner(): Promise<void> {
     const removeBed = target.closest<HTMLElement>('[data-remove-bed]'); if (removeBed) { removeBed.closest('[data-bed-id]')?.remove(); return; }
     const removeRoom = target.closest<HTMLElement>('[data-remove-room]'); if (removeRoom) { removeRoom.closest('[data-room-id]')?.remove(); return; }
     if (target.closest('#tp-add-travel-time')) { addTravelTimeEditor(); return; }
+    if (target.closest('#tp-import-airbnb')) { void importAirbnbListing(); return; }
+    if (target.closest('#tp-dismiss-airbnb')) {
+      dismissedAirbnbUrl = ($<HTMLFormElement>('#tp-stay-form').elements.namedItem('url') as HTMLInputElement).value.trim();
+      $('#tp-airbnb-import-prompt').hidden = true;
+      return;
+    }
     const removeTravelTime = target.closest<HTMLElement>('[data-remove-travel-time]'); if (removeTravelTime) { removeTravelTime.closest('.tp-travel-time-row')?.remove(); return; }
     const editPerson = target.closest<HTMLElement>('[data-edit-person]'); if (editPerson) return openPersonDialog(editPerson.dataset.editPerson);
     const removePerson = target.closest<HTMLElement>('[data-remove-person]'); if (removePerson) { const person = trip!.participants.find(candidate => candidate.id === removePerson.dataset.removePerson); if (person) openDeletePersonDialog(person); return; }

@@ -80,6 +80,7 @@ export interface TransportOption {
   participantIds: Id[];
   seats?: number;
   pricePerPerson: number;
+  priceTotal?: number;
   currency: 'GBP' | 'EUR';
   bookingUrl?: string;
   baggageRules: BaggageRule[];
