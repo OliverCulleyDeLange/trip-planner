@@ -493,6 +493,52 @@ function renderMapPanel(title: string, maps: JourneyMap[]): string {
   return `<section class="tp-card-section tp-map-section" data-map-panel><div class="tp-card-section-heading"><h2>${escapeHtml(title)}</h2><p class="tp-map-detail">${escapeHtml(maps[0].detail)}</p></div><div class="tp-map-panel"><div class="tp-map-canvas" role="region" aria-label="${escapeHtml(title)}" data-map-sensitive="${Boolean(maps[0].sensitive)}" data-map-locations="${encoded(maps[0].locations)}" data-map-routes="${encoded(maps[0].routes ?? [])}"><p class="tp-map-loading">Loading map…</p></div>${legend}<div class="tp-map-switcher">${maps.map((map, index) => `<button class="${index === 0 ? 'active' : ''}" data-map-locations="${encoded(map.locations)}" data-map-routes="${encoded(map.routes ?? [])}" data-map-sensitive="${Boolean(map.sensitive)}" data-map-detail="${escapeHtml(map.detail)}">${escapeHtml(map.label)}</button>`).join('')}</div><a class="tp-geocoder-attribution" href="https://www.geoapify.com/" target="_blank" rel="noopener">Address search by Geoapify</a></div></section>`;
 }
 
+type OptionCardConfig = {
+  variant: 'transport' | 'stay';
+  selected?: boolean;
+  headerClass?: string;
+  kicker: string;
+  price: string;
+  priceLabel: string;
+  actions: string;
+  body: string;
+  voting: string;
+};
+
+function renderOptionCard(config: OptionCardConfig): string {
+  return `<article class="tp-option-card tp-${config.variant}-card ${config.selected ? 'is-selected' : ''}"><header class="tp-option-card-header ${config.headerClass ?? ''}"><div class="tp-option-card-actions">${config.actions}</div><span class="tp-option-card-kicker">${config.kicker}</span><strong class="tp-option-card-price">${config.price}<small>${config.priceLabel}</small></strong></header><div class="tp-option-card-body">${config.body}</div><div class="tp-option-card-voting">${config.voting}</div></article>`;
+}
+
+function renderOptionVoting(option: { votes: Record<string, VoteValue>; participantIds?: string[] }, buttons: string, ariaLabel: string): string {
+  return `<div class="tp-option-voting">${renderVoteChart(option, true)}<div class="tp-vote-buttons" role="group" aria-label="${escapeHtml(ariaLabel)}">${buttons}</div></div>`;
+}
+
+function mergeMapPoints(points: Exclude<MapPoint, string>[]): Exclude<MapPoint, string>[] {
+  return points.reduce<Exclude<MapPoint, string>[]>((merged, point) => {
+    const locationKey = point.location.trim().toLocaleLowerCase();
+    const existingPoint = merged.find(candidate => candidate.location.trim().toLocaleLowerCase() === locationKey);
+    if (!existingPoint) {
+      merged.push({ ...point });
+      return merged;
+    }
+    if (point.label && existingPoint.label && !existingPoint.label.split(' + ').includes(point.label)) existingPoint.label = `${existingPoint.label} + ${point.label}`;
+    if (existingPoint.latitude === undefined && point.latitude !== undefined) existingPoint.latitude = point.latitude;
+    if (existingPoint.longitude === undefined && point.longitude !== undefined) existingPoint.longitude = point.longitude;
+    return merged;
+  }, []);
+}
+
+function renderOptionsMapBanner(kind: 'transport' | 'stays', ariaLabel: string, points: Exclude<MapPoint, string>[], routes: MapRoute[] = []): string {
+  const mergedPoints = mergeMapPoints(points.filter(point => point.location.trim()));
+  if (!mergedPoints.length) return '';
+  const storageKey = `trip-planner:${kind}-map-height:${trip!.id}`;
+  let mapHeight = 190;
+  try { mapHeight = Math.min(620, Math.max(150, Number(localStorage.getItem(storageKey)) || mapHeight)); } catch { mapHeight = 190; }
+  const encodedPoints = encodeURIComponent(JSON.stringify(mergedPoints));
+  const encodedRoutes = encodeURIComponent(JSON.stringify(routes));
+  return `<section class="tp-options-map-banner" data-map-panel data-options-map-resizable data-map-storage-key="${escapeHtml(storageKey)}" style="--options-map-height:${mapHeight}px"><div class="tp-map-canvas tp-options-map-canvas" role="region" aria-label="${escapeHtml(ariaLabel)}" data-map-connect="${routes.length ? 'true' : 'false'}" data-map-sensitive="false" data-map-locations="${encodedPoints}" data-map-routes="${encodedRoutes}"><p class="tp-map-loading">Loading ${escapeHtml(kind)} map…</p></div><div class="tp-options-map-fade" aria-hidden="true"></div><button class="tp-options-map-resizer" type="button" role="separator" aria-label="Resize ${escapeHtml(ariaLabel.toLowerCase())}" aria-orientation="horizontal" aria-valuemin="150" aria-valuemax="620" aria-valuenow="${mapHeight}" title="Drag to resize the map"><span></span></button></section>`;
+}
+
 function renderAddressMap(people: Participant[]): string {
   const mappedPeople = people.filter(person => person.origin.trim());
   if (!mappedPeople.length) return '';
@@ -762,8 +808,20 @@ function baggageRuleFor(option: TransportOption, item: BaggageItem) {
 
 function renderTransport(): string {
   const allOptions = [...trip!.transportOptions].sort((a, b) => a.departureAt.localeCompare(b.departureAt));
+  const mapRoutes = allOptions.filter(option => option.origin.trim() && option.destination.trim()).map(option => ({
+    mode: option.mode,
+    from: { location: option.origin, label: option.origin, colour: routeColourForMode[option.mode], latitude: option.originCoordinates?.latitude, longitude: option.originCoordinates?.longitude },
+    to: { location: option.destination, label: option.destination, colour: routeColourForMode[option.mode], latitude: option.destinationCoordinates?.latitude, longitude: option.destinationCoordinates?.longitude },
+  }));
+  const mapPoints = allOptions.flatMap<Exclude<MapPoint, string>>(option => {
+    const points: Exclude<MapPoint, string>[] = [];
+    if (option.origin.trim()) points.push({ location: option.origin, label: option.origin, colour: routeColourForMode[option.mode], latitude: option.originCoordinates?.latitude, longitude: option.originCoordinates?.longitude });
+    if (option.destination.trim()) points.push({ location: option.destination, label: option.destination, colour: routeColourForMode[option.mode], latitude: option.destinationCoordinates?.latitude, longitude: option.destinationCoordinates?.longitude });
+    return points;
+  });
+  const transportMap = renderOptionsMapBanner('transport', 'Transport options map', mapPoints, mapRoutes);
   const options = allOptions.filter(option => isRelevantTo(option, planningPersonId));
-  const content = options.length ? `<div class="tp-timeline">${options.map(option => {
+  const content = options.length ? `<div class="tp-option-list">${options.map(option => {
     const people = option.participantIds.map(id => trip!.participants.find(person => person.id === id)).filter((person): person is Participant => Boolean(person));
     const baggage = people.flatMap(person => person.baggage.map(item => ({ person, item, rule: baggageRuleFor(option, item) })));
     const baggageTotal = baggage.reduce((total, row) => total + (row.rule?.price ?? 0), 0);
@@ -778,14 +836,18 @@ function renderTransport(): string {
     const capacityWarning = option.mode === 'car' && option.seats && people.length > option.seats
       ? `<p class="tp-capacity-warning">${people.length} travellers for ${option.seats} seats — this car is over capacity.</p>`
       : option.mode === 'car' && option.seats ? `<p class="tp-seat-count">${option.seats} seat${option.seats === 1 ? '' : 's'}</p>` : '';
-    const actions = `<div class="tp-option-actions"><button class="tp-button ${option.status === 'selected' ? 'tp-button-quiet' : 'tp-button-primary'}" data-select-transport="${option.id}">${option.status === 'selected' ? 'Unselect' : 'Select option'}</button><button class="tp-action-button tp-action-edit" data-edit-transport="${option.id}">Edit</button><button class="tp-action-button tp-action-delete" data-remove-transport="${option.id}">Delete</button></div>`;
-    return `<article class="tp-transport-card"><div class="tp-mode-icon">${iconForMode[option.mode]}</div><div class="tp-transport-main"><div class="tp-card-topline"><span class="tp-status-pill tp-status-${option.status}">${option.status}</span>${option.operator ? `<span>${escapeHtml(option.operator)}</span>` : ''}</div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><div class="tp-transport-heading"><h2>${escapeHtml(option.title)}</h2><div class="tp-transport-price"><strong>${displayedPrice ? money(displayedPrice, option.currency) : '—'}</strong><span>${priceLabel} · ${priceDetail}</span></div></div>${route}${capacityWarning}${renderPersonChips(people)}${option.notes ? `<p class="tp-transport-notes">${escapeHtml(option.notes)}</p>` : ''}${option.bookingUrl ? `<p><a href="${escapeHtml(option.bookingUrl)}" target="_blank" rel="noopener">Open listing or booking page ↗</a></p>` : ''}${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}</div><div class="tp-option-poll">${renderVoteChart(option)}<div class="tp-vote-buttons"><button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div>${actions}</div>${option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : ''}</article>`;
+    const selectionAction = option.status === 'booked' ? '' : `<button class="tp-action-button tp-action-choose ${option.status === 'selected' ? 'is-selected' : ''}" data-select-transport="${option.id}">${option.status === 'selected' ? 'Unselect' : 'Select'}</button>`;
+    const actions = `${selectionAction}<button class="tp-action-button tp-action-edit" data-edit-transport="${option.id}">Edit</button><button class="tp-action-button tp-action-delete" data-remove-transport="${option.id}">Delete</button>`;
+    const baggageDetails = option.mode === 'flight' ? `<details class="tp-baggage"><summary>Baggage comparison <span>${baggage.length} item${baggage.length === 1 ? '' : 's'}</span></summary><div class="tp-baggage-rows">${baggage.length ? baggage.map(row => `<div>${avatar(row.person)}<span>${escapeHtml(row.item.label)} · ${row.item.weightKg} kg</span><strong>${row.rule ? money(row.rule.price, row.rule.currency) : 'Included / check'}</strong></div>`).join('') : '<p>Add baggage on the People screen first.</p>'}</div>${option.baggageRules[0] ? `<div class="tp-sources"><a href="${option.baggageRules[0].sourceUrl}" target="_blank" rel="noopener">Official baggage rules ↗</a> · manually checked</div>` : ''}</details>` : '';
+    const body = `<div class="tp-transport-title"><span class="tp-mode-icon">${iconForMode[option.mode]}</span><div><p class="tp-transport-date">${dateOr(option.departureAt, 'Date not added', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p><h2>${escapeHtml(option.title)}</h2></div><span class="tp-status-pill tp-status-${option.status}">${option.status}</span></div>${route}${capacityWarning}${renderPersonChips(people)}${option.notes ? `<p class="tp-transport-notes">${escapeHtml(option.notes)}</p>` : ''}${option.bookingUrl ? `<p><a href="${escapeHtml(option.bookingUrl)}" target="_blank" rel="noopener">Open listing or booking page ↗</a></p>` : ''}${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}${baggageDetails}`;
+    const voting = renderOptionVoting(option, `<button data-transport="${option.id}" data-transport-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-transport="${option.id}" data-transport-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-transport="${option.id}" data-transport-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button>`, `Your vote for ${option.title}`);
+    return renderOptionCard({ variant: 'transport', selected: option.status === 'selected' || option.status === 'booked', headerClass: `tp-option-card-header-transport tp-option-card-header-${option.mode}`, kicker: `${iconForMode[option.mode]} ${escapeHtml(modeLabel[option.mode])}${option.operator ? ` · ${escapeHtml(option.operator)}` : ''}`, price: displayedPrice ? money(displayedPrice, option.currency) : '—', priceLabel: `${priceLabel} · ${priceDetail}`, actions, body, voting });
   }).join('')}</div>` : allOptions.length ? '<section class="tp-filter-empty"><p>No transport options involve this traveller.</p></section>' : emptyState('✈', 'No routes yet', 'Add a flight, train, coach, car or ferry. Assign the people taking it and enter operator baggage prices.', 'Add first transport option', 'id="tp-add-transport"');
   const addButton = '<button class="tp-button tp-button-primary" data-add-transport>+ Add transport</button>';
-  return `${sectionHeading('', 'Transport', '', allOptions.length ? addButton : '')}${allOptions.length ? renderPlanningPersonFilter('transport') : ''}${content}${allOptions.length ? `<div class="tp-page-add-action">${addButton}</div>` : ''}`;
+  return `${transportMap}${sectionHeading('', 'Transport', '', allOptions.length ? addButton : '')}${allOptions.length ? renderPlanningPersonFilter('transport') : ''}${content}${allOptions.length ? `<div class="tp-page-add-action">${addButton}</div>` : ''}`;
 }
 
-function renderVoteChart(option: { votes: Record<string, VoteValue>; participantIds?: string[] }): string {
+function renderVoteChart(option: { votes: Record<string, VoteValue>; participantIds?: string[] }, compact = false): string {
   const eligiblePeople = option.participantIds === undefined ? trip!.participants : trip!.participants.filter(person => option.participantIds!.includes(person.id));
   const results = [
     { key: 'first-choice' as const, label: 'Love it', className: 'is-love' },
@@ -795,7 +857,7 @@ function renderVoteChart(option: { votes: Record<string, VoteValue>; participant
   const awaiting = eligiblePeople.filter(person => !option.votes[person.id]);
   const summary = results.map(result => `${result.label}: ${result.people.length}`).join(', ');
   const voterChip = (person: Participant) => `<span class="tp-voter-chip ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}"><i>${escapeHtml(person.initials)}</i><b>${escapeHtml(person.name)}</b></span>`;
-  return `<div class="tp-vote-chart" aria-label="Votes — ${summary}"><div class="tp-vote-columns">${results.map(result => `<section class="${result.className}"><div class="tp-vote-stack">${result.people.map(voterChip).join('') || '<span class="tp-no-votes">No votes</span>'}</div><footer><strong>${result.label}</strong><b>${result.people.length}</b></footer></section>`).join('')}</div>${awaiting.length ? `<div class="tp-awaiting-votes"><span>Awaiting vote</span>${awaiting.map(voterChip).join('')}</div>` : ''}</div>`;
+  return `<div class="tp-vote-chart ${compact ? 'is-compact' : ''}" aria-label="Votes — ${summary}"><div class="tp-vote-columns">${results.map(result => `<section class="${result.className}"><div class="tp-vote-stack">${result.people.map(voterChip).join('') || (compact ? '' : '<span class="tp-no-votes">No votes</span>')}</div>${compact ? '' : `<footer><strong>${result.label}</strong><b>${result.people.length}</b></footer>`}</section>`).join('')}</div>${awaiting.length ? `<div class="tp-awaiting-votes"><span>Awaiting vote</span>${awaiting.map(voterChip).join('')}</div>` : ''}</div>`;
 }
 
 function allowsDoubleShare(person: Participant, other: Participant): boolean {
@@ -908,12 +970,20 @@ function renderRoomPlan(rooms: Room[], people: Participant[]): string {
     const sizeClass = bed.type === 'double' || bed.type === 'king' ? 'is-double' : 'is-single';
     return `<span class="tp-bed"><span class="tp-bed-icon ${sizeClass}" role="img" aria-label="${escapeHtml(`${bedDescription}: ${occupantNames}`)}" title="${escapeHtml(occupantNames)}"><span class="tp-bed-people">${occupants.map(person => `<i class="${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}">${escapeHtml(person.initials)}</i>`).join('')}</span></span><small>${escapeHtml(bedLabel)}</small></span>`;
   }).join('') : '<span class="tp-no-beds">No beds added</span>'}</div></section>`).join('');
-  const warning = unassigned.length ? `<div class="tp-room-plan-warning"><strong>Bed assignment issue</strong>${unassigned.map(person => `<p>${escapeHtml(unassignedBedReason(person, rooms, assignments))}</p>`).join('')}</div>` : '';
-  return `<div class="tp-room-plan-list"><p class="tp-room-plan-intro">Suggested room plan based on sleeping preferences</p>${roomCards}${warning}</div>`;
+  const warning = unassigned.length ? `<div class="tp-room-plan-warning"><strong>Bed assignment issue</strong>${renderPersonChips(unassigned)}${unassigned.map(person => `<p>${escapeHtml(unassignedBedReason(person, rooms, assignments))}</p>`).join('')}</div>` : '';
+  return `<div class="tp-room-plan-list">${roomCards}${warning}</div>`;
 }
 
 function renderStays(): string {
   if (!trip!.accommodationOptions.length) return `${sectionHeading('', 'Stays', '')}${emptyState('🏠', 'No accommodation yet', 'Add a hotel, house, hostel, campsite or any other option.', 'Add first accommodation', 'id="tp-add-stay"')}`;
+  const stayMap = renderOptionsMapBanner('stays', 'Accommodation options map', trip!.accommodationOptions.map(option => ({
+    id: option.id,
+    location: option.location,
+    label: option.name,
+    colour: option.status === 'selected' || option.status === 'booked' ? '#63a879' : '#e4bd88',
+    latitude: option.locationCoordinates?.latitude,
+    longitude: option.locationCoordinates?.longitude,
+  })));
   const options = trip!.accommodationOptions.filter(option => isRelevantTo(option, planningPersonId));
   const content = options.length ? `<div class="tp-stay-grid">${options.map(option => {
     const ownVote = option.votes[session!.participantId];
@@ -921,10 +991,13 @@ function renderStays(): string {
     const pricePerPerson = option.priceTotal ? money(option.priceTotal / Math.max(relevantPeople.length, 1), option.currency) : '—';
     const roomPlan = option.rooms.length ? renderRoomPlan(option.rooms, relevantPeople) : '';
     const listingButton = option.sourceUrl ? `<a class="tp-listing-icon" href="${option.sourceUrl}" target="_blank" rel="noopener" aria-label="Open listing for ${escapeHtml(option.name)}" title="Open listing">↗</a>` : '';
-    const chooseButton = option.status === 'selected' ? '' : `<button class="tp-button tp-button-primary tp-stay-choose" data-select-stay="${option.id}">Choose</button>`;
-    return `<article class="tp-stay-card ${option.status === 'selected' ? 'is-selected' : ''}"><div class="tp-stay-image tp-stay-image-${option.fitLevel}"><div class="tp-stay-header-actions"><button class="tp-action-button tp-action-edit" type="button" data-edit-stay="${option.id}">Edit</button><button class="tp-action-button tp-action-delete" type="button" data-remove-stay="${option.id}">Delete</button></div><span>${option.status === 'selected' ? 'Selected stay' : escapeHtml(option.platform || 'Accommodation')}</span><strong class="tp-stay-price">${pricePerPerson}<small>per person</small></strong></div><div class="tp-stay-body"><div class="tp-panel-head"><div class="tp-stay-heading"><div class="tp-stay-title-row"><h2>${escapeHtml(option.name)}</h2>${listingButton}</div><p>${escapeHtml(option.location || 'Location not added')}</p></div><span class="tp-fit tp-fit-${option.fitLevel}">${option.fitLevel}</span></div>${roomPlan}${renderPersonChips(relevantPeople)}<p class="tp-fit-copy">${escapeHtml(option.fitSummary)}</p>${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}${option.siteDistances.length ? `<div class="tp-site-distances">${option.siteDistances.map(item => `<span>${escapeHtml(item.site)} <b>${item.minutes} min</b></span>`).join('')}</div>` : ''}${renderVoteChart(option)}<div class="tp-vote-buttons" role="group" aria-label="Your vote for ${escapeHtml(option.name)}"><button data-accommodation="${option.id}" data-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-accommodation="${option.id}" data-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-accommodation="${option.id}" data-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button></div>${chooseButton}</div></article>`;
+    const chooseButton = option.status === 'selected' || option.status === 'booked' ? '' : `<button class="tp-action-button tp-action-choose" type="button" data-select-stay="${option.id}">Choose</button>`;
+    const actions = `${chooseButton}<button class="tp-action-button tp-action-edit" type="button" data-edit-stay="${option.id}">Edit</button><button class="tp-action-button tp-action-delete" type="button" data-remove-stay="${option.id}">Delete</button>`;
+    const body = `<div class="tp-panel-head"><div class="tp-stay-heading"><div class="tp-stay-title-row"><h2>${escapeHtml(option.name)}</h2>${listingButton}</div><p>${escapeHtml(option.location || 'Location not added')}</p></div><span class="tp-fit tp-fit-${option.fitLevel}">${option.fitLevel}</span></div>${roomPlan}<p class="tp-fit-copy">${escapeHtml(option.fitSummary)}</p>${option.bookingReference ? `<p class="tp-booking-ref">Booking reference: <strong>${escapeHtml(option.bookingReference)}</strong></p>` : ''}${option.siteDistances.length ? `<div class="tp-site-distances">${option.siteDistances.map(item => `<span>${escapeHtml(item.site)} <b>${item.minutes} min</b></span>`).join('')}</div>` : ''}`;
+    const voting = renderOptionVoting(option, `<button data-accommodation="${option.id}" data-vote="first-choice" class="${ownVote === 'first-choice' ? 'active' : ''}">Love it</button><button data-accommodation="${option.id}" data-vote="acceptable" class="${ownVote === 'acceptable' ? 'active' : ''}">Works</button><button data-accommodation="${option.id}" data-vote="unacceptable" class="${ownVote === 'unacceptable' ? 'active' : ''}">No</button>`, `Your vote for ${option.name}`);
+    return renderOptionCard({ variant: 'stay', selected: option.status === 'selected' || option.status === 'booked', headerClass: `tp-option-card-header-${option.fitLevel}`, kicker: option.status === 'selected' ? 'Selected stay' : escapeHtml(option.platform || 'Accommodation'), price: pricePerPerson, priceLabel: 'per person', actions, body, voting });
   }).join('')}</div>` : '<section class="tp-filter-empty"><p>No accommodation options involve this traveller.</p></section>';
-  return `${sectionHeading('', 'Stays', '', '<button class="tp-button tp-button-primary" id="tp-add-stay">+ Add accommodation</button>')}${renderPlanningPersonFilter('accommodation')}${content}`;
+  return `${stayMap}${sectionHeading('', 'Stays', '', '<button class="tp-button tp-button-primary" id="tp-add-stay">+ Add accommodation</button>')}${renderPlanningPersonFilter('accommodation')}${content}`;
 }
 
 function renderActivities(): string {

@@ -303,6 +303,9 @@ const { page, tripId } = Astro.props;
   const appBase = document.querySelector('#trip-planner-root')?.dataset.baseUrl?.replace(/\/$/, '') || '';
   const addressConsentKey = 'trip-planner:address-geocoding-consent';
   const routeColours = { flight: '#3478c9', train: '#7b5fc7', coach: '#d97706', car: '#397354', ferry: '#168a92' };
+  const optionsMapMinHeight = 150;
+  const optionsMapMaxHeight = 620;
+  let optionsMapResize;
 
   const geocode = async location => {
     const key = location.trim().toLowerCase();
@@ -424,6 +427,46 @@ const { page, tripId } = Astro.props;
   });
 
   window.addEventListener('trip-planner:maps-rendered', () => queueMicrotask(initialiseMaps));
+  const setOptionsMapHeight = (banner, value, persist = true) => {
+    const height = Math.min(optionsMapMaxHeight, Math.max(optionsMapMinHeight, Math.round(value)));
+    banner.style.setProperty('--options-map-height', `${height}px`);
+    const handle = banner.querySelector('.tp-options-map-resizer');
+    handle?.setAttribute('aria-valuenow', String(height));
+    liveMaps.get(banner.querySelector('.tp-map-canvas'))?.resize();
+    if (persist && banner.dataset.mapStorageKey) localStorage.setItem(banner.dataset.mapStorageKey, String(height));
+  };
+  document.addEventListener('pointerdown', event => {
+    const handle = event.target.closest('.tp-options-map-resizer');
+    if (!handle) return;
+    const banner = handle.closest('[data-options-map-resizable]');
+    event.preventDefault();
+    handle.setPointerCapture?.(event.pointerId);
+    optionsMapResize = { banner, handle, pointerId: event.pointerId, startY: event.clientY, startHeight: banner.getBoundingClientRect().height };
+    document.body.classList.add('tp-resizing-options-map');
+  });
+  document.addEventListener('pointermove', event => {
+    if (!optionsMapResize || event.pointerId !== optionsMapResize.pointerId) return;
+    setOptionsMapHeight(optionsMapResize.banner, optionsMapResize.startHeight + event.clientY - optionsMapResize.startY, false);
+  });
+  const finishOptionsMapResize = event => {
+    if (!optionsMapResize || event.pointerId !== optionsMapResize.pointerId) return;
+    const { banner, handle, pointerId } = optionsMapResize;
+    handle.releasePointerCapture?.(pointerId);
+    setOptionsMapHeight(banner, banner.getBoundingClientRect().height);
+    optionsMapResize = undefined;
+    document.body.classList.remove('tp-resizing-options-map');
+  };
+  document.addEventListener('pointerup', finishOptionsMapResize);
+  document.addEventListener('pointercancel', finishOptionsMapResize);
+  document.addEventListener('keydown', event => {
+    const handle = event.target.closest('.tp-options-map-resizer');
+    if (!handle || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const banner = handle.closest('[data-options-map-resizable]');
+    const current = banner.getBoundingClientRect().height;
+    const next = event.key === 'Home' ? optionsMapMinHeight : event.key === 'End' ? optionsMapMaxHeight : current + (event.key === 'ArrowDown' ? 24 : -24);
+    setOptionsMapHeight(banner, next);
+  });
   document.addEventListener('click', event => {
     const consentButton = event.target.closest('[data-enable-address-map]');
     if (consentButton) {
