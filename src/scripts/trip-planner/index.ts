@@ -324,6 +324,14 @@ function updateTransportFields(): void {
   $('#tp-transport-destination-label').textContent = isCar ? 'Drop-off location' : 'To';
   const price = form.elements.namedItem('price') as HTMLInputElement;
   price.placeholder = isCar ? '420.00' : '149.00';
+  const accommodation = trip?.accommodationOptions.find(option => option.status === 'selected' || option.status === 'booked');
+  const accommodationPick = form.querySelector<HTMLButtonElement>('[data-transport-destination-accommodation]');
+  const accommodationPicks = $('#tp-transport-destination-quick-picks');
+  accommodationPicks.hidden = !isCar || !accommodation;
+  if (accommodationPick && accommodation) {
+    accommodationPick.dataset.transportDestinationAccommodation = accommodation.id;
+    accommodationPick.title = `Use ${accommodation.name}${accommodation.location ? ` — ${accommodation.location}` : ''}`;
+  }
   updateTransportCapacityWarning();
 }
 
@@ -1790,6 +1798,13 @@ export async function mountTripPlanner(): Promise<void> {
       const input = field?.querySelector<HTMLInputElement>('[data-location-input]');
       if (!input) return;
       setLocationInput(input, result.location, { latitude: result.latitude, longitude: result.longitude });
+      return;
+    }
+    const accommodationDestination = target.closest<HTMLButtonElement>('[data-transport-destination-accommodation]');
+    if (accommodationDestination) {
+      const accommodation = trip!.accommodationOptions.find(option => option.id === accommodationDestination.dataset.transportDestinationAccommodation);
+      const input = $<HTMLFormElement>('#tp-transport-form').elements.namedItem('destination') as HTMLInputElement;
+      if (accommodation) setLocationInput(input, accommodation.location.trim() || accommodation.name, accommodation.locationCoordinates);
       return;
     }
     const timeButton = target.closest<HTMLButtonElement>('[data-time-for]'); if (timeButton?.dataset.timeFor) { openTimePicker(document.getElementById(timeButton.dataset.timeFor) as HTMLInputElement); return; }
