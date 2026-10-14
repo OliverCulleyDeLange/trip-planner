@@ -510,7 +510,7 @@ function renderOptionCard(config: OptionCardConfig): string {
 }
 
 function renderOptionVoting(option: { votes: Record<string, VoteValue>; participantIds?: string[] }, buttons: string, ariaLabel: string): string {
-  return `<div class="tp-option-voting">${renderVoteChart(option, true)}<div class="tp-vote-buttons" role="group" aria-label="${escapeHtml(ariaLabel)}">${buttons}</div></div>`;
+  return `<div class="tp-option-voting">${renderVoteChart(option, true, false)}<div class="tp-vote-buttons" role="group" aria-label="${escapeHtml(ariaLabel)}">${buttons}</div>${renderAwaitingVotes(option)}</div>`;
 }
 
 function renderOptionNotes(notes?: string): string {
@@ -852,17 +852,28 @@ function renderTransport(): string {
   return `${transportMap}${sectionHeading('', 'Transport', '', allOptions.length ? addButton : '')}${allOptions.length ? renderPlanningPersonFilter('transport') : ''}${content}${allOptions.length ? `<div class="tp-page-add-action">${addButton}</div>` : ''}`;
 }
 
-function renderVoteChart(option: { votes: Record<string, VoteValue>; participantIds?: string[] }, compact = false): string {
-  const eligiblePeople = option.participantIds === undefined ? trip!.participants : trip!.participants.filter(person => option.participantIds!.includes(person.id));
+function eligibleVotePeople(option: { participantIds?: string[] }): Participant[] {
+  return option.participantIds === undefined ? trip!.participants : trip!.participants.filter(person => option.participantIds!.includes(person.id));
+}
+
+function renderVoterChip(person: Participant): string {
+  return `<span class="tp-voter-chip ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}"><i>${escapeHtml(person.initials)}</i><b>${escapeHtml(person.name)}</b></span>`;
+}
+
+function renderAwaitingVotes(option: { votes: Record<string, VoteValue>; participantIds?: string[] }): string {
+  const awaiting = eligibleVotePeople(option).filter(person => !option.votes[person.id]);
+  return awaiting.length ? `<div class="tp-awaiting-votes"><span>Awaiting vote</span>${awaiting.map(renderVoterChip).join('')}</div>` : '';
+}
+
+function renderVoteChart(option: { votes: Record<string, VoteValue>; participantIds?: string[] }, compact = false, includeAwaiting = true): string {
+  const eligiblePeople = eligibleVotePeople(option);
   const results = [
     { key: 'first-choice' as const, label: 'Love it', className: 'is-love' },
     { key: 'acceptable' as const, label: 'Works', className: 'is-works' },
     { key: 'unacceptable' as const, label: 'No', className: 'is-no' },
   ].map(result => ({ ...result, people: eligiblePeople.filter(person => option.votes[person.id] === result.key) }));
-  const awaiting = eligiblePeople.filter(person => !option.votes[person.id]);
   const summary = results.map(result => `${result.label}: ${result.people.length}`).join(', ');
-  const voterChip = (person: Participant) => `<span class="tp-voter-chip ${personDateState(person) === 'confirmed' ? '' : 'is-date-unconfirmed'}" style="--person:${person.colour}" title="${escapeHtml(personDateLabel(person))}"><i>${escapeHtml(person.initials)}</i><b>${escapeHtml(person.name)}</b></span>`;
-  return `<div class="tp-vote-chart ${compact ? 'is-compact' : ''}" aria-label="Votes — ${summary}"><div class="tp-vote-columns">${results.map(result => `<section class="${result.className}"><div class="tp-vote-stack">${result.people.map(voterChip).join('') || (compact ? '' : '<span class="tp-no-votes">No votes</span>')}</div>${compact ? '' : `<footer><strong>${result.label}</strong><b>${result.people.length}</b></footer>`}</section>`).join('')}</div>${awaiting.length ? `<div class="tp-awaiting-votes"><span>Awaiting vote</span>${awaiting.map(voterChip).join('')}</div>` : ''}</div>`;
+  return `<div class="tp-vote-chart ${compact ? 'is-compact' : ''}" aria-label="Votes — ${summary}"><div class="tp-vote-columns">${results.map(result => `<section class="${result.className}"><div class="tp-vote-stack">${result.people.map(renderVoterChip).join('') || (compact ? '' : '<span class="tp-no-votes">No votes</span>')}</div>${compact ? '' : `<footer><strong>${result.label}</strong><b>${result.people.length}</b></footer>`}</section>`).join('')}</div>${includeAwaiting ? renderAwaitingVotes(option) : ''}</div>`;
 }
 
 function allowsDoubleShare(person: Participant, other: Participant): boolean {
